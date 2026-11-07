@@ -178,7 +178,8 @@ func TestSendThenRecv(t *testing.T) {
 		req("SEND", p+",33188"),
 		chunk("DATA", payload[:65536]),
 		chunk("DATA", payload[65536:131072]),
-		chunk("DATA", payload[131072:]),
+		chunk("DATA", payload[131072:196608]),
+		chunk("DATA", payload[196608:]),
 		done(1),
 	)
 	out := runSync(t, req("RECV", p))

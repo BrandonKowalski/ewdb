@@ -55,7 +55,8 @@ func miscHandlers(r *session.Registry, d *Deps) {
 		mapped(ctx, s, d, "root", fallback)
 	})
 	r.Handle("reconnect", func(ctx context.Context, s *session.Stream, arg string) {
-		s.Session().Reset()
+		io.WriteString(s, "done")
+		s.Session().Kick()
 	})
 	r.Handle("framebuffer:", func(ctx context.Context, s *session.Stream, arg string) {
 		framebuffer(ctx, s, d)
@@ -96,9 +97,7 @@ func reboot(s io.WriteCloser, d *Deps, arg string) {
 		runAction(context.Background(), d, command, io.Discard)
 		return
 	}
-	if msg := restart2(s, arg); msg != "" {
-		io.WriteString(s, msg)
-	}
+	io.WriteString(s, restart2(arg))
 }
 
 func rebootUnavailable(arg string) string {

@@ -2,8 +2,6 @@
 
 package services
 
-import "io"
-
-func restart2(s io.Closer, arg string) string {
+func restart2(arg string) string {
 	return rebootUnavailable(arg)
 }

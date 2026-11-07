@@ -176,6 +176,7 @@ func (s *Session) open(m wire.Message) {
 	}
 	st, err := s.newStream(m.Arg0)
 	if err != nil {
+		s.c.write(wire.Message{Command: wire.CLSE, Arg1: m.Arg0})
 		return
 	}
 	if err := st.send(wire.Message{Command: wire.OKAY, Arg0: st.local, Arg1: m.Arg0}); err != nil {
@@ -233,17 +234,8 @@ func (s *Session) reset() {
 	}
 }
 
-func (s *Session) Reset() {
-	s.mu.Lock()
-	streams := make([]*Stream, 0, len(s.streams))
-	for _, st := range s.streams {
-		streams = append(streams, st)
-	}
-	s.mu.Unlock()
-	for _, st := range streams {
-		st.Close()
-	}
-	s.reset()
+func (s *Session) Kick() {
+	s.c.t.Close()
 }
 
 func (s *Session) Dial(ctx context.Context, service string) (*Stream, error) {

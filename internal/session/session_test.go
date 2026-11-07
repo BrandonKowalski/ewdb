@@ -648,30 +648,30 @@ func TestSessionContextOutlivesStreamAndEndsOnReset(t *testing.T) {
 	}
 }
 
-func TestResetClosesEveryStreamAndAcceptsNewConnect(t *testing.T) {
+func TestKickEndsServe(t *testing.T) {
 	reg := &Registry{}
 	reg.Handle("wait:", func(ctx context.Context, s *Stream, arg string) {
 		<-ctx.Done()
 	})
 	reg.Handle("reconnect", func(ctx context.Context, s *Stream, arg string) {
-		s.Session().Reset()
+		s.Session().Kick()
 	})
 	h := start(t, reg)
 	h.connect(4096)
-	a := h.open(1, "wait:")
-	b := h.open(2, "wait:")
-	c := h.open(3, "reconnect")
-	closed := map[uint32]uint32{}
-	for i := 0; i < 3; i++ {
-		m := h.expect()
-		if m.Command != wire.CLSE {
-			t.Fatalf("got %08x want CLSE", m.Command)
-		}
-		closed[m.Arg1] = m.Arg0
+	h.open(1, "wait:")
+	h.open(2, "reconnect")
+	select {
+	case err := <-h.errc:
+		h.errc <- err
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after Kick")
 	}
-	if closed[1] != a || closed[2] != b || closed[3] != c {
-		t.Fatalf("closed %v", closed)
-	}
+}
+
+func TestOpenOnClosedSessionGetsClose(t *testing.T) {
+	reg := &Registry{}
+	h := start(t, reg)
 	h.connect(4096)
-	h.open(4, "wait:")
+	h.p.in <- wire.Message{Command: wire.OPEN, Arg0: 7, Data: []byte("x:\x00")}
+	h.expectMsg(wire.CLSE, 0, 7, "")
 }

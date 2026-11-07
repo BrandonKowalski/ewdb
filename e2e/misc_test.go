@@ -69,3 +69,23 @@ func TestJdwpReturnsQuickly(t *testing.T) {
 		t.Fatalf("jdwp took %v", d)
 	}
 }
+
+func TestReconnectRecovers(t *testing.T) {
+	serial := startDaemon(t, "")
+	start := time.Now()
+	adb(t, serial, "reconnect")
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("reconnect took %v", d)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		adb(t, "", "connect", serial)
+		if _, _, code := adb(t, serial, "shell", "true"); code == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shell did not work after reconnect")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}

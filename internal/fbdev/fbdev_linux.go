@@ -80,6 +80,9 @@ func Grab(path string) (capture.Image, error) {
 	if format == 0 {
 		return capture.Image{}, fmt.Errorf("%s: unsupported pixel layout of %d bits per pixel", path, v.bitsPerPixel)
 	}
+	if f.lineLength == 0 {
+		f.lineLength = v.xresVirtual * v.bitsPerPixel / 8
+	}
 	size := int(f.smemLen)
 	if size == 0 {
 		return capture.Image{}, fmt.Errorf("%s: empty framebuffer", path)
@@ -99,3 +102,8 @@ func Grab(path string) (capture.Image, error) {
 	}
 	return capture.Image{W: int(v.xres), H: int(v.yres), Pix: pix}, nil
 }
+
+const (
+	_ = uint(unsafe.Sizeof(varScreenInfo{}) - 160)
+	_ = uint(160 - unsafe.Sizeof(varScreenInfo{}))
+)

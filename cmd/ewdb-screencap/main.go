@@ -162,9 +162,13 @@ func captureDRM(src source, named []screen, want string, stderr io.Writer) (int,
 		return 0, nil, 0
 	}
 	lit := map[string]bool{}
+	anyLit := 0
 	var list []screen
 	for _, c := range conns {
 		lit[c.Name] = c.Lit
+		if c.Lit {
+			anyLit++
+		}
 		if named == nil && c.Lit {
 			list = append(list, screen{c.Name, c.Name})
 		}
@@ -177,17 +181,15 @@ func captureDRM(src source, named []screen, want string, stderr io.Writer) (int,
 		if list, ok = pick(list, want); !ok {
 			fmt.Fprintf(stderr, "screencap: no screen %q\n", want)
 			fmt.Fprint(stderr, usageText)
-			return 2, nil, 0
+			return 2, nil, anyLit
 		}
 	}
 	var imgs []capture.Image
-	nlit := 0
 	for _, s := range list {
 		if !lit[s.connector] {
 			fmt.Fprintf(stderr, "screencap: the %s screen is off\n", s.name)
 			continue
 		}
-		nlit++
 		img, err := src.Grab(s.connector, s.name)
 		if err != nil {
 			fmt.Fprintf(stderr, "screencap: %v\n", err)
@@ -195,7 +197,7 @@ func captureDRM(src source, named []screen, want string, stderr io.Writer) (int,
 		}
 		imgs = append(imgs, img)
 	}
-	return 0, imgs, nlit
+	return 0, imgs, anyLit
 }
 
 func main() {

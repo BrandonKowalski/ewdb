@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"ewdb/internal/capture"
 	"ewdb/internal/drm"
@@ -21,7 +23,14 @@ func newBackend() backend {
 
 func openDRM() (source, error) {
 	cards, _ := filepath.Glob("/dev/dri/card*")
-	sort.Strings(cards)
+	sort.Slice(cards, func(i, j int) bool {
+		a, aerr := strconv.Atoi(strings.TrimPrefix(filepath.Base(cards[i]), "card"))
+		b, berr := strconv.Atoi(strings.TrimPrefix(filepath.Base(cards[j]), "card"))
+		if aerr != nil || berr != nil {
+			return cards[i] < cards[j]
+		}
+		return a < b
+	})
 	var last error = errNoDRM
 	for _, c := range cards {
 		dev, err := drm.Open(c)

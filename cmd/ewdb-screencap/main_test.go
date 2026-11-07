@@ -95,7 +95,7 @@ func TestOffScreenIsReportedAndSkipped(t *testing.T) {
 	}
 }
 
-func TestAllOffFallsBackToFramebuffer(t *testing.T) {
+func TestNothingLitFallsBackToFramebuffer(t *testing.T) {
 	src := &fakeSource{conns: []connector{{"DSI-1", false}}}
 	code, out, errs := exec(t, fakeBackend(src), "--screens", "top=DSI-1")
 	if code != 0 || errs != "screencap: the top screen is off\n" {
@@ -103,6 +103,20 @@ func TestAllOffFallsBackToFramebuffer(t *testing.T) {
 	}
 	if w, h := dims(t, out); w != 1 || h != 1 {
 		t.Fatalf("%dx%d", w, h)
+	}
+}
+
+func TestSelectedOffWhileOtherLitExitsOne(t *testing.T) {
+	src := &fakeSource{conns: []connector{{"DSI-1", true}, {"DSI-2", false}}}
+	fbRead := false
+	be := fakeBackend(src)
+	be.grabFB = func() (capture.Image, error) {
+		fbRead = true
+		return capture.Image{W: 1, H: 1, Pix: []byte{0, 0, 0, 0xff}}, nil
+	}
+	code, out, errs := exec(t, be, "-d", "top", "--screens", "top=DSI-2,bottom=DSI-1")
+	if code != 1 || len(out) != 0 || fbRead || errs != "screencap: the top screen is off\n" {
+		t.Fatalf("code %d out %d fb %v err %q", code, len(out), fbRead, errs)
 	}
 }
 

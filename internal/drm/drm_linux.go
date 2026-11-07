@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -40,6 +41,14 @@ func ioctl(fd int, req uint32, arg unsafe.Pointer) error {
 	}
 }
 
+var heapSink any
+
+func alloc[T any](n int) []T {
+	s := make([]T, n)
+	heapSink = s
+	return s
+}
+
 func ptr64[T any](s []T) uint64 {
 	if len(s) == 0 {
 		return 0
@@ -55,6 +64,11 @@ func Open(path string) (*Device, error) {
 	d := &Device{fd: fd}
 	c := setClientCap{capability: clientCapUniversalPlanes, value: 1}
 	ioctl(fd, ioctlSetClientCap, unsafe.Pointer(&c))
+	var res modeCardRes
+	if err := ioctl(fd, ioctlGetResources, unsafe.Pointer(&res)); err != nil {
+		unix.Close(fd)
+		return nil, &pathError{path, err}
+	}
 	return d, nil
 }
 
@@ -76,9 +90,11 @@ func (d *Device) connectorIDs() ([]uint32, error) {
 		if err := ioctl(d.fd, ioctlGetResources, unsafe.Pointer(&res)); err != nil {
 			return nil, err
 		}
-		ids := make([]uint32, res.countConns+1)
+		ids := alloc[uint32](int(res.countConns) + 1)
 		res = modeCardRes{countConns: uint32(len(ids)), connectorIDPtr: ptr64(ids)}
-		if err := ioctl(d.fd, ioctlGetResources, unsafe.Pointer(&res)); err != nil {
+		err := ioctl(d.fd, ioctlGetResources, unsafe.Pointer(&res))
+		runtime.KeepAlive(ids)
+		if err != nil {
 			return nil, err
 		}
 		if int(res.countConns) <= len(ids) {
@@ -111,10 +127,13 @@ func (d *Device) isPrimary(plane uint32) bool {
 		if err := ioctl(d.fd, ioctlObjGetProperties, unsafe.Pointer(&o)); err != nil {
 			return false
 		}
-		ids := make([]uint32, o.countProps+1)
-		vals := make([]uint64, len(ids))
+		ids := alloc[uint32](int(o.countProps) + 1)
+		vals := alloc[uint64](len(ids))
 		o = modeObjGetProperties{objID: plane, objType: objectPlane, countProps: uint32(len(ids)), propsPtr: ptr64(ids), propValuesPtr: ptr64(vals)}
-		if err := ioctl(d.fd, ioctlObjGetProperties, unsafe.Pointer(&o)); err != nil {
+		err := ioctl(d.fd, ioctlObjGetProperties, unsafe.Pointer(&o))
+		runtime.KeepAlive(ids)
+		runtime.KeepAlive(vals)
+		if err != nil {
 			return false
 		}
 		if int(o.countProps) > len(ids) {
@@ -153,9 +172,11 @@ func (d *Device) primaryPlanes() ([]primaryPlane, error) {
 		if err := ioctl(d.fd, ioctlGetPlaneResources, unsafe.Pointer(&r)); err != nil {
 			return nil, err
 		}
-		ids = make([]uint32, r.countPlanes+1)
+		ids = alloc[uint32](int(r.countPlanes) + 1)
 		r = modeGetPlaneRes{planeIDPtr: ptr64(ids), countPlanes: uint32(len(ids))}
-		if err := ioctl(d.fd, ioctlGetPlaneResources, unsafe.Pointer(&r)); err != nil {
+		err := ioctl(d.fd, ioctlGetPlaneResources, unsafe.Pointer(&r))
+		runtime.KeepAlive(ids)
+		if err != nil {
 			return nil, err
 		}
 		if int(r.countPlanes) <= len(ids) {

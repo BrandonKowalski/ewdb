@@ -4,9 +4,13 @@ package e2e
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -190,5 +194,31 @@ func TestInteractiveShellSignalsAndResize(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("adb still running 2 s after ^C: %q", out.String())
+	}
+}
+
+func TestExecInDeliversAllStdin(t *testing.T) {
+	serial := startDaemon(t, "")
+	dir := t.TempDir()
+	data := make([]byte, 8<<20)
+	rand.Read(data)
+	dst := filepath.Join(dir, "in.bin")
+	requireAdb(t)
+	cmd := exec.Command(adbPath, "-s", serial, "exec-in", "cat > '"+dst+"'")
+	cmd.Env = adbEnv()
+	cmd.Stdin = bytes.NewReader(data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("exec-in: %v %s", err, out)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, _ := os.ReadFile(dst)
+		if sha256.Sum256(got) == sha256.Sum256(data) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("device file has %d bytes, want %d", len(got), len(data))
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

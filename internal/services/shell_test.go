@@ -382,3 +382,54 @@ func TestCancelWithEscapedGrandchildHoldingPipes(t *testing.T) {
 func TestCancelWithEscapedGrandchildHoldingPty(t *testing.T) {
 	cancelMidCommand(t, shellArgs{v2: true, pty: true, command: holdCommand(t)}, "escaped")
 }
+
+func hostCloseAfter(t *testing.T, a shellArgs, data []byte) (chan struct{}, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.session = context.Background()
+	f := newFake()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		run(ctx, f, testDeps(t), a)
+	}()
+	go func() {
+		f.w.Write(data)
+		f.w.Close()
+	}()
+	t.Cleanup(f.close)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	return done, cancel
+}
+
+func TestNonV2RawHostCloseDeliversAllStdin(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "in.bin")
+	data := make([]byte, 8<<20)
+	for i := range data {
+		data[i] = byte(i * 31)
+	}
+	done, cancel := hostCloseAfter(t, shellArgs{command: "sleep 0.3; cat > '" + out + "'"}, data)
+	defer cancel()
+	finish(t, done)
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("child got %d bytes, want %d", len(got), len(data))
+	}
+}
+
+func TestNonV2RawHostCloseStillEndsAStuckChild(t *testing.T) {
+	old := stdinLinger
+	stdinLinger = 300 * time.Millisecond
+	defer func() { stdinLinger = old }()
+	done, cancel := hostCloseAfter(t, shellArgs{command: "trap '' HUP; exec sleep 300"}, []byte("x"))
+	defer cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return after the linger")
+	}
+}

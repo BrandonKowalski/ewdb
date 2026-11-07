@@ -35,11 +35,14 @@ const (
 	drainWait       = 2 * time.Second
 )
 
+var stdinLinger = 30 * time.Second
+
 type shellArgs struct {
 	v2      bool
 	pty     bool
 	term    string
 	command string
+	session context.Context
 }
 
 func parseShell(name string) (shellArgs, bool) {
@@ -73,6 +76,7 @@ func shellHandler(d *Deps) session.Handler {
 		if !ok {
 			return
 		}
+		a.session = s.Session().Context()
 		run(ctx, s, d, a)
 	}
 }
@@ -295,6 +299,24 @@ func exitCode(ps *os.ProcessState) int {
 	return ps.ExitCode() & 0xff
 }
 
+func (a shellArgs) hostCloseEndsStdin() bool {
+	return !a.v2 && !a.pty && a.session != nil && a.session.Err() == nil
+}
+
+func lingerAfterHostClose(session context.Context, pumped, exited <-chan struct{}) {
+	linger := time.NewTimer(stdinLinger)
+	defer linger.Stop()
+	for _, c := range []<-chan struct{}{pumped, exited} {
+		select {
+		case <-c:
+		case <-linger.C:
+			return
+		case <-session.Done():
+			return
+		}
+	}
+}
+
 func run(ctx context.Context, rw io.ReadWriter, d *Deps, a shellArgs) {
 	out := &output{w: rw, v2: a.v2}
 	var args []string
@@ -312,7 +334,11 @@ func run(ctx context.Context, rw io.ReadWriter, d *Deps, a shellArgs) {
 	defer p.close()
 
 	first := make(chan struct{})
-	go pump(rw, p, a.v2, first)
+	pumped := make(chan struct{})
+	go func() {
+		defer close(pumped)
+		pump(rw, p, a.v2, first)
+	}()
 	if a.pty && a.v2 {
 		select {
 		case <-first:
@@ -328,10 +354,12 @@ func run(ctx context.Context, rw io.ReadWriter, d *Deps, a shellArgs) {
 	p.closeChild()
 	pid := cmd.Process.Pid
 
-	exited := make(chan int, 1)
+	var code int
+	exited := make(chan struct{})
 	go func() {
 		cmd.Wait()
-		exited <- exitCode(cmd.ProcessState)
+		code = exitCode(cmd.ProcessState)
+		close(exited)
 	}()
 	var wg sync.WaitGroup
 	for _, s := range p.outs {
@@ -350,12 +378,15 @@ func run(ctx context.Context, rw io.ReadWriter, d *Deps, a shellArgs) {
 	select {
 	case <-copied:
 		select {
-		case code := <-exited:
+		case <-exited:
 			out.packet(idExit, []byte{byte(code)})
 			return
 		case <-ctx.Done():
 		}
 	case <-ctx.Done():
+	}
+	if a.hostCloseEndsStdin() {
+		lingerAfterHostClose(a.session, pumped, exited)
 	}
 
 	syscall.Kill(-pid, syscall.SIGHUP)

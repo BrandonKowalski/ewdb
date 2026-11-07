@@ -16,6 +16,7 @@ type Deps struct {
 func Register(r *session.Registry, d *Deps) {
 	r.Handle("shell", shellHandler(d))
 	r.Handle("exec:", execHandler(d))
+	r.Handle("sync:", syncHandler())
 }
 
 func Env(d *Deps, term string) []string {

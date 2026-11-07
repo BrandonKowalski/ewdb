@@ -3,6 +3,9 @@ package uinput
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -21,7 +24,6 @@ var (
 	uiDevCreate  = ioc(0, 'U', 1, 0)
 	uiDevDestroy = ioc(0, 'U', 2, 0)
 	uiDevSetup   = ioc(iocWrite, 'U', 3, setupSize)
-	uiAbsSetup   = ioc(iocWrite, 'U', 4, absSetupSize)
 	uiSetEvbit   = ioc(iocWrite, 'U', 100, 4)
 	uiSetKeybit  = ioc(iocWrite, 'U', 101, 4)
 	uiSetRelbit  = ioc(iocWrite, 'U', 102, 4)
@@ -30,10 +32,7 @@ var (
 	uiSetLedbit  = ioc(iocWrite, 'U', 105, 4)
 	uiSetSndbit  = ioc(iocWrite, 'U', 106, 4)
 	uiSetSwbit   = ioc(iocWrite, 'U', 109, 4)
-	uiSetPropbit = ioc(iocWrite, 'U', 110, 4)
 )
-
-func eviocgid() uintptr { return ioc(iocRead, 'E', 0x02, 8) }
 
 func eviocgname(n int) uintptr { return ioc(iocRead, 'E', 0x06, uintptr(n)) }
 
@@ -70,13 +69,12 @@ type spec struct {
 	id    ID
 	types []uint16
 	codes map[uint16][]uint16
-	abs   map[uint16]AbsInfo
-	props []uint16
 }
 
 type Device struct {
 	fd      int
 	name    string
+	owned   bool
 	support map[uint32]bool
 	abs     map[uint16]AbsInfo
 }
@@ -110,8 +108,27 @@ func (d *Device) Write(typ, code uint16, value int32) error {
 	return nil
 }
 
+func (d *Device) Lock(timeout time.Duration) (func(), error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := unix.Flock(d.fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return func() { unix.Flock(d.fd, unix.LOCK_UN) }, nil
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EINTR {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for %s", d.name)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func (d *Device) Close() error {
-	ioctlInt(d.fd, uiDevDestroy, 0)
+	if d.owned {
+		ioctlInt(d.fd, uiDevDestroy, 0)
+	}
 	return unix.Close(d.fd)
 }
 
@@ -156,7 +173,7 @@ func create(s spec) (*Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Device{fd: fd, name: s.name, support: map[uint32]bool{}, abs: s.abs}
+	d := &Device{fd: fd, name: s.name, owned: true, support: map[uint32]bool{}}
 	fail := func(err error) (*Device, error) {
 		unix.Close(fd)
 		return nil, fmt.Errorf("create %q: %w", s.name, err)
@@ -176,27 +193,11 @@ func create(s spec) (*Device, error) {
 			d.support[uint32(typ)<<16|uint32(c)] = true
 		}
 	}
-	for _, p := range s.props {
-		if err := ioctlInt(fd, uiSetPropbit, int(p)); err != nil {
-			if !isUnsupported(err) {
-				return fail(err)
-			}
-		}
-	}
-	setup := EncodeSetup(s.name, s.id)
-	err = ioctlBuf(fd, uiDevSetup, setup)
-	if err == nil {
-		for code, a := range s.abs {
-			if err = ioctlBuf(fd, uiAbsSetup, EncodeAbsSetup(code, a)); err != nil {
-				break
-			}
-		}
-	}
-	if err != nil {
+	if err := ioctlBuf(fd, uiDevSetup, EncodeSetup(s.name, s.id)); err != nil {
 		if !isUnsupported(err) {
 			return fail(err)
 		}
-		legacy := EncodeUserDev(s.name, s.id, s.abs)
+		legacy := EncodeUserDev(s.name, s.id, nil)
 		if n, werr := unix.Write(fd, legacy); werr != nil || n != len(legacy) {
 			if werr == nil {
 				werr = errors.New("short write")
@@ -210,30 +211,13 @@ func create(s spec) (*Device, error) {
 	return d, nil
 }
 
-func Keyboard(name string) (*Device, error) {
-	codes := make([]uint16, 0, 255)
-	for c := uint16(1); c < 256; c++ {
-		codes = append(codes, c)
-	}
+func Keyboard(name string, codes []uint16) (*Device, error) {
 	return create(spec{
 		name:  name,
 		id:    ID{Bus: BUS_VIRTUAL, Vendor: 1, Product: 1, Version: 1},
 		types: []uint16{EV_KEY},
 		codes: map[uint16][]uint16{EV_KEY: codes},
 	})
-}
-
-func openEvent(path string) (int, error) {
-	return unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC, 0)
-}
-
-func DeviceName(eventPath string) (string, error) {
-	fd, err := openEvent(eventPath)
-	if err != nil {
-		return "", err
-	}
-	defer unix.Close(fd)
-	return readName(fd)
 }
 
 func readName(fd int) (string, error) {
@@ -253,43 +237,15 @@ var codeMax = map[uint16]int{
 	EV_SW: SW_MAX, EV_LED: LED_MAX, EV_SND: SND_MAX,
 }
 
-func Clone(eventPath string) (*Device, error) {
-	fd, err := openEvent(eventPath)
-	if err != nil {
-		return nil, err
-	}
-	defer unix.Close(fd)
-	name, err := readName(fd)
-	if err != nil {
-		return nil, fmt.Errorf("%s: name: %w", eventPath, err)
-	}
-	var raw [8]byte
-	if err := ioctlBuf(fd, eviocgid(), raw[:]); err != nil {
-		return nil, fmt.Errorf("%s: id: %w", eventPath, err)
-	}
-	s := spec{
-		name: name,
-		id: ID{
-			Bus:     uint16(raw[0]) | uint16(raw[1])<<8,
-			Vendor:  uint16(raw[2]) | uint16(raw[3])<<8,
-			Product: uint16(raw[4]) | uint16(raw[5])<<8,
-			Version: uint16(raw[6]) | uint16(raw[7])<<8,
-		},
-		codes: map[uint16][]uint16{},
-		abs:   map[uint16]AbsInfo{},
-	}
+func readCaps(fd int, d *Device) error {
 	evBits := make([]byte, EV_MAX/8+1)
 	if err := ioctlBuf(fd, eviocgbit(0, len(evBits)), evBits); err != nil {
-		return nil, fmt.Errorf("%s: event bits: %w", eventPath, err)
+		return fmt.Errorf("event bits: %w", err)
 	}
 	for t := 0; t <= EV_MAX; t++ {
 		typ := uint16(t)
-		if !testBit(evBits, t) || typ == EV_FF {
-			continue
-		}
-		s.types = append(s.types, typ)
 		max, ok := codeMax[typ]
-		if !ok {
+		if !testBit(evBits, t) || !ok {
 			continue
 		}
 		bits := make([]byte, max/8+1)
@@ -298,27 +254,56 @@ func Clone(eventPath string) (*Device, error) {
 		}
 		for c := 0; c <= max; c++ {
 			if testBit(bits, c) {
-				s.codes[typ] = append(s.codes[typ], uint16(c))
+				d.support[uint32(typ)<<16|uint32(c)] = true
 			}
 		}
 	}
-	for _, c := range s.codes[EV_ABS] {
+	for c := uint16(0); c <= ABS_MAX; c++ {
+		if !d.support[uint32(EV_ABS)<<16|uint32(c)] {
+			continue
+		}
 		var a [24]byte
 		if err := ioctlBuf(fd, eviocgabs(c), a[:]); err != nil {
-			return nil, fmt.Errorf("%s: abs %#x: %w", eventPath, c, err)
+			return fmt.Errorf("abs %#x: %w", c, err)
 		}
 		le := func(i int) int32 {
 			return int32(uint32(a[i]) | uint32(a[i+1])<<8 | uint32(a[i+2])<<16 | uint32(a[i+3])<<24)
 		}
-		s.abs[c] = AbsInfo{Value: le(0), Min: le(4), Max: le(8), Fuzz: le(12), Flat: le(16), Resolution: le(20)}
+		d.abs[c] = AbsInfo{Value: le(0), Min: le(4), Max: le(8), Fuzz: le(12), Flat: le(16), Resolution: le(20)}
 	}
-	props := make([]byte, INPUT_PROP_MAX/8+1)
-	if err := ioctlBuf(fd, eviocgprop(len(props)), props); err == nil {
-		for p := 0; p <= INPUT_PROP_MAX; p++ {
-			if testBit(props, p) {
-				s.props = append(s.props, uint16(p))
-			}
+	return nil
+}
+
+func OpenEvent(path string) (*Device, error) {
+	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	name, err := readName(fd)
+	if err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("%s: name: %w", path, err)
+	}
+	d := &Device{fd: fd, name: name, support: map[uint32]bool{}, abs: map[uint16]AbsInfo{}}
+	if err := readCaps(fd, d); err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return d, nil
+}
+
+func FindEvent(name string) (*Device, error) {
+	paths, _ := filepath.Glob("/dev/input/event*")
+	sort.Strings(paths)
+	for _, p := range paths {
+		d, err := OpenEvent(p)
+		if err != nil {
+			continue
 		}
+		if d.name == name {
+			return d, nil
+		}
+		d.Close()
 	}
-	return create(s)
+	return nil, fmt.Errorf("input device %q not found", name)
 }

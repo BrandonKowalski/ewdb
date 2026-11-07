@@ -9,11 +9,10 @@ const (
 	TimevalSize  = 2 * (strconv.IntSize / 8)
 	KeyboardName = "ewdb keyboard"
 
-	userDevSize  = 1116
-	setupSize    = 92
-	absSetupSize = 28
-	maxNameSize  = 80
-	absCount     = 64
+	userDevSize = 1116
+	setupSize   = 92
+	maxNameSize = 80
+	absCount    = 64
 )
 
 type ID struct {
@@ -71,15 +70,5 @@ func EncodeSetup(name string, id ID) []byte {
 	b := make([]byte, setupSize)
 	putID(b, id)
 	putName(b[8:88], name)
-	return b
-}
-
-func EncodeAbsSetup(code uint16, a AbsInfo) []byte {
-	b := make([]byte, absSetupSize)
-	le := binary.LittleEndian
-	le.PutUint16(b, code)
-	for i, v := range []int32{a.Value, a.Min, a.Max, a.Fuzz, a.Flat, a.Resolution} {
-		le.PutUint32(b[4+4*i:], uint32(v))
-	}
 	return b
 }

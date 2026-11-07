@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,7 @@ type KeyTarget struct {
 
 type Touch struct {
 	Device     string
+	MinX, MinY int32
 	MaxX, MaxY int32
 }
 
@@ -185,24 +188,24 @@ func (b *builder) up(t Touch, delay time.Duration) {
 	b.syn(t.Device)
 }
 
-func parseCoord(s, axis string, max int32) (int32, error) {
+func parseCoord(s, axis string, min, max int32) (int32, error) {
 	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, fmt.Errorf("invalid number %q", s)
 	}
-	v := int64(f)
-	if v < 0 || v > int64(max) {
-		return 0, fmt.Errorf("%s out of range 0..%d", axis, max)
+	f = math.Trunc(f)
+	if f < float64(min) || f > float64(max) {
+		return 0, fmt.Errorf("%s out of range %d..%d", axis, min, max)
 	}
-	return int32(v), nil
+	return int32(f), nil
 }
 
 func parsePoint(x, y string, t Touch) (int32, int32, error) {
-	px, err := parseCoord(x, "x", t.MaxX)
+	px, err := parseCoord(x, "x", t.MinX, t.MaxX)
 	if err != nil {
 		return 0, 0, err
 	}
-	py, err := parseCoord(y, "y", t.MaxY)
+	py, err := parseCoord(y, "y", t.MinY, t.MaxY)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -321,31 +324,52 @@ func planText(args []string) ([]Event, error) {
 	return b.events, nil
 }
 
-func Plan(args []string, keys map[string]KeyTarget, touch Touch) ([]Event, error) {
+func command(args []string) (string, []string) {
 	if len(args) > 0 && sources[args[0]] {
 		args = args[1:]
 	}
 	if len(args) == 0 {
+		return "", nil
+	}
+	return args[0], args[1:]
+}
+
+func textCodes() []uint16 {
+	seen := map[uint16]bool{uinput.KEY_LEFTSHIFT: true}
+	for _, k := range textKeys {
+		seen[k.code] = true
+	}
+	codes := make([]uint16, 0, len(seen))
+	for c := range seen {
+		codes = append(codes, c)
+	}
+	sort.Slice(codes, func(i, j int) bool { return codes[i] < codes[j] })
+	return codes
+}
+
+func Plan(args []string, keys map[string]KeyTarget, touch Touch) ([]Event, error) {
+	cmd, rest := command(args)
+	if cmd == "" {
 		return nil, errors.New("usage: input [SOURCE] tap|swipe|keyevent|text ARGS")
 	}
 	var events []Event
 	var err error
-	switch args[0] {
+	switch cmd {
 	case "tap", "swipe":
 		if touch.Device == "" {
 			return nil, errors.New("no touch screen is configured")
 		}
-		if args[0] == "tap" {
-			events, err = planTap(args[1:], touch)
+		if cmd == "tap" {
+			events, err = planTap(rest, touch)
 		} else {
-			events, err = planSwipe(args[1:], touch)
+			events, err = planSwipe(rest, touch)
 		}
 	case "keyevent":
-		events, err = planKeyevent(args[1:], keys)
+		events, err = planKeyevent(rest, keys)
 	case "text":
-		events, err = planText(args[1:])
+		events, err = planText(rest)
 	default:
-		return nil, fmt.Errorf("unknown command %q", args[0])
+		return nil, fmt.Errorf("unknown command %q", cmd)
 	}
 	if err != nil {
 		return nil, err

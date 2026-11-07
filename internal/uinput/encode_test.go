@@ -88,13 +88,4 @@ func TestSetupLayouts(t *testing.T) {
 	if len(s) != 92 || string(s[8:11]) != "pad" || binary.LittleEndian.Uint16(s[0:]) != 3 || binary.LittleEndian.Uint16(s[6:]) != 6 {
 		t.Fatalf("setup %v", s)
 	}
-	a := EncodeAbsSetup(ABS_X, AbsInfo{Value: 1, Min: 2, Max: 3, Fuzz: 4, Flat: 5, Resolution: 6})
-	if len(a) != 28 || binary.LittleEndian.Uint16(a[0:]) != ABS_X {
-		t.Fatalf("abs setup %v", a)
-	}
-	for i, v := range []uint32{1, 2, 3, 4, 5, 6} {
-		if binary.LittleEndian.Uint32(a[4+4*i:]) != v {
-			t.Fatalf("field %d", i)
-		}
-	}
 }

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"ewdb/internal/config"
 )
@@ -42,12 +43,12 @@ func serve(c *config.Config) int {
 	for _, w := range c.Warnings {
 		log.Print(w)
 	}
-	run, closeAll, err := openDevices(c)
+	kb, closeKb, err := openKeyboard()
 	if err != nil {
 		log.Print(err)
 		return 1
 	}
-	defer closeAll()
+	defer closeKb()
 	ln, err := listen(socketPath(c))
 	if err != nil {
 		log.Print(err)
@@ -56,7 +57,20 @@ func serve(c *config.Config) int {
 	defer os.Remove(socketPath(c))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	serveLoop(ctx, ln, run)
+	serveLoop(ctx, ln, textRunner(kb, time.Sleep))
+	return 0
+}
+
+func local(c *config.Config, devs Devices, args []string, stderr io.Writer) int {
+	keys, warnings := parseKeys(c.Section("keys"))
+	for _, w := range warnings {
+		fmt.Fprintf(stderr, "ewdb-input: warning: %s\n", w)
+	}
+	in := &injector{devs: devs, keys: keys, touch: setting(c, "touch"), sleep: time.Sleep}
+	if err := in.run(args); err != nil {
+		fmt.Fprintf(stderr, "ewdb-input: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -69,7 +83,13 @@ func execute(args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ewdb-input: unknown option %s\n", args[0])
 		return 1
 	}
-	return client(socketPath(c), args, stderr)
+	if cmd, _ := command(args); cmd == "text" {
+		return client(socketPath(c), args, stderr)
+	}
+	if len(args) == 0 {
+		return client(socketPath(c), args, stderr)
+	}
+	return local(c, systemDevices{}, args, stderr)
 }
 
 func main() {

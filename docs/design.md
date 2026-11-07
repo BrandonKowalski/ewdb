@@ -165,17 +165,25 @@ something else.
   command line, `dmesg`, the log, `ps`, mounts, `df`, input devices, DRM
   connectors, power supply state, network state with secrets removed, and the boot
   timing record dsOS already writes.
-- `input`: `tap X Y`, `swipe X1 Y1 X2 Y2 [ms]`, `keyevent KEY...`, `text STRING`,
-  through a uinput device. Touch coordinates are the touch screen's pixels.
-  `keyevent` accepts Android key names and numbers for the keys a handheld has
-  (D-pad, A/B/X/Y, shoulders, start, select, home, back, volume, power), mapped to
-  gamepad and key events that frontends see the way they see the real buttons.
-  Designer's call: one uinput device per real input device it stands in for
-  (dsOS: `retrogame_joypad`, `adc-keys-back`, `gpio-keys-volume`, `rk805 pwrkey`,
-  `Goodix Capacitive TouchScreen`), copying the real device's name, bus, vendor,
-  product, version and axis ranges, so frontends that pick devices by name or SDL
-  GUID treat injected events as the same controls. The per-device configuration
-  holds which real devices to clone. Verified against Slot.
+- `input`: `tap X Y`, `swipe X1 Y1 X2 Y2 [ms]`, `keyevent KEY...`, `text STRING`.
+  `tap`, `swipe` and `keyevent` write `input_event` records straight into the real
+  `/dev/input/eventN` node of the target device, found by its name
+  (`EVIOCGNAME`, first match in sorted `event*` order, as Slot picks it). The
+  kernel delivers injected events to every reader of that device, so a frontend
+  that already has the node open sees them as the real controls, with no server
+  involved. Touch coordinates are the panel's raw range from `EVIOCGABS`
+  (`Goodix Capacitive TouchScreen` in dsOS); the multi-touch, `BTN_TOUCH` and
+  `ABS_X`/`ABS_Y` events are sent only where the device reports them. `keyevent`
+  accepts Android key names and numbers for the keys a handheld has (D-pad,
+  A/B/X/Y, shoulders, start, select, home, back, volume, power); the `[keys]`
+  section maps each to a device name and a Linux code, and a code the device does
+  not have is an error. Concurrent invocations are serialized with an advisory
+  `flock` on the event node. Only `text` needs a persistent device:
+  `ewdb-input --serve` owns a uinput keyboard (`ewdb keyboard`, limited to the
+  keys `text` types plus shift) and runs `text` requests over a unix socket;
+  without it `text` fails and the other commands are unaffected. If another
+  process holds an `EVIOCGRAB` on a device, the kernel does not deliver
+  injected events to other readers.
 - `getprop`: prints the properties the daemon advertises plus the ones host tools
   ask for first (`ro.build.version.release`, `ro.build.version.sdk`,
   `ro.product.cpu.abi`, `ro.serialno`, `ro.product.manufacturer`, and similar),
@@ -236,7 +244,7 @@ These would make the project a failure even if the feature list works:
 - Old kernels: USB through the legacy Android gadget device (`/dev/android_adb`)
   as well as FunctionFS, FunctionFS descriptors in the v1 format when the v2 one
   is refused, `screencap` falling back from `GETFB2` to `GETFB` and then to
-  `/dev/fb0`, and `input` falling back from `UI_DEV_SETUP` to the older
+  `/dev/fb0`, and the `text` keyboard falling back from `UI_DEV_SETUP` to the older
   `uinput_user_dev` write.
 - The handheld has no UI of its own for prompts. The frontend, Slot (`../slot`,
   running from `/mnt/sdcard/System/slot`), owns the screens. Slot is the

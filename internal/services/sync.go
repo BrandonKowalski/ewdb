@@ -140,10 +140,8 @@ func serveSync(ctx context.Context, rw io.ReadWriteCloser) {
 		if !c.request() {
 			return
 		}
-		if c.br.Buffered() == 0 {
-			if c.bw.Flush() != nil {
-				return
-			}
+		if c.bw.Flush() != nil {
+			return
 		}
 	}
 }
@@ -358,8 +356,6 @@ func (c *syncConn) send(spec string) bool {
 		ts, ok = c.sendLink(path)
 	} else {
 		mode &= 0o777
-		mode |= (mode >> 3) & 0o070
-		mode |= (mode >> 3) & 0o007
 		ts, ok = c.sendFile(path, os.FileMode(mode), doUnlink)
 	}
 	if !ok {
@@ -404,6 +400,11 @@ func (c *syncConn) sendFile(path string, mode os.FileMode, doUnlink bool) (uint3
 		}
 		if id != idData {
 			c.fail("invalid data message")
+			f.Close()
+			return 0, c.abortSend(path, doUnlink)
+		}
+		if n > syncDataMax {
+			c.fail("oversize data message")
 			f.Close()
 			return 0, c.abortSend(path, doUnlink)
 		}

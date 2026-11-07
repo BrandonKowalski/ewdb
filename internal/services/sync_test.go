@@ -149,7 +149,7 @@ func TestSendCreatesParents(t *testing.T) {
 	if fi.ModTime().Unix() != 1700000000 {
 		t.Fatalf("mtime %v", fi.ModTime())
 	}
-	if fi.Mode().Perm() != 0o666 {
+	if fi.Mode().Perm() != 0o644 {
 		t.Fatalf("mode %v", fi.Mode())
 	}
 }
@@ -177,7 +177,8 @@ func TestSendThenRecv(t *testing.T) {
 	runSync(t,
 		req("SEND", p+",33188"),
 		chunk("DATA", payload[:65536]),
-		chunk("DATA", payload[65536:]),
+		chunk("DATA", payload[65536:131072]),
+		chunk("DATA", payload[131072:]),
 		done(1),
 	)
 	out := runSync(t, req("RECV", p))
@@ -246,6 +247,21 @@ func TestSendCancelMidTransfer(t *testing.T) {
 	case <-returned:
 	case <-time.After(time.Second):
 		t.Fatal("handler did not return within 1s of cancel")
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Fatalf("partial file remains: %v", err)
+	}
+}
+
+func TestSendOversizeChunkFails(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "big")
+	out := runSync(t,
+		req("SEND", p+",33188"),
+		chunk("DATA", []byte("ok")),
+		chunk("DATA", make([]byte, 65537)),
+	)
+	if string(out[:4]) != "FAIL" || !strings.Contains(string(out[8:]), "oversize data message") {
+		t.Fatalf("got %q", out)
 	}
 	if _, err := os.Lstat(p); !os.IsNotExist(err) {
 		t.Fatalf("partial file remains: %v", err)

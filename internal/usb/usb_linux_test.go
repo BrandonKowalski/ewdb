@@ -2,6 +2,7 @@ package usb
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 	"time"
 
@@ -115,24 +116,26 @@ func TestFFSTransportReadsPayloadSplitAcrossTransfers(t *testing.T) {
 	}
 }
 
-func TestFFSTransportWritesHeaderAndPayloadAsOneTransferEach(t *testing.T) {
+func TestFFSTransportWritesPayloadInChunkedRequests(t *testing.T) {
 	dev, host := seqpacket(t)
 	defer unix.Close(host)
 	tr := newFFSTransport(dev, dev, devNull(t))
 	defer tr.Close()
 	payload := bytes.Repeat([]byte{7}, 3*chunk+100)
+	unix.SetsockoptTimeval(host, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &unix.Timeval{Sec: 2})
 	go tr.Write(wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload})
 	buf := make([]byte, 8*chunk)
+	want := []int{headerLen, chunk, chunk, chunk, 100}
 	var sizes []int
-	for _, want := range []int{headerLen, len(payload)} {
+	for range want {
 		n, err := unix.Read(host, buf)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("record sizes %v, then %v", sizes, err)
 		}
 		sizes = append(sizes, n)
-		if n != want {
-			t.Fatalf("record sizes %v, want %d, %d", sizes, headerLen, len(payload))
-		}
+	}
+	if !slices.Equal(sizes, want) {
+		t.Fatalf("record sizes %v, want %v", sizes, want)
 	}
 }
 

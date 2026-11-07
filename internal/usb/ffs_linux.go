@@ -32,6 +32,7 @@ const (
 	settleDelay     = 250 * time.Millisecond
 	disconnectHold  = 300 * time.Millisecond
 	minSettle       = 50 * time.Millisecond
+	ffsWriteChunk   = 16384
 	reconnectWait   = 5 * time.Second
 	connectAttempts = 10
 	connectRetry    = 500 * time.Millisecond
@@ -302,7 +303,7 @@ func (e *ffsEndpoint) openTransport(gen uint64) (*transport, error) {
 }
 
 func newFFSTransport(out, in, devnull int) *transport {
-	return newTransport(out, in, devnull, wire.MaxPayload, wire.MaxPayload)
+	return newTransport(out, in, devnull, wire.MaxPayload, ffsWriteChunk)
 }
 
 func (e *ffsEndpoint) softReconnect(ctx context.Context) bool {

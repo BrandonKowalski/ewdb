@@ -118,7 +118,7 @@ func startDaemon(t *testing.T, conf string) (serial string) {
 	}
 	addr := "127.0.0.1:" + port
 	var logs bytes.Buffer
-	d := exec.Command(ewdbdBin, "-c", confPath, "-listen", addr)
+	d := exec.Command(ewdbdBin, "-c", confPath, "-listen", addr, "-launchers", filepath.Join(dir, "bin"))
 	d.Stderr = &logs
 	if err := d.Start(); err != nil {
 		t.Fatal(err)

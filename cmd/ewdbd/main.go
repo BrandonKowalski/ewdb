@@ -9,11 +9,16 @@ import (
 	"syscall"
 
 	"ewdb/internal/config"
+	"ewdb/internal/launchers"
+	"ewdb/internal/services"
 	"ewdb/internal/session"
 )
 
+const defaultPath = "/usr/sbin:/usr/bin:/sbin:/bin"
+
 func main() {
 	confPath := flag.String("c", "/etc/ewdbd.conf", "config path")
+	launcherDir := flag.String("launchers", "/run/ewdbd/bin", "directory for command launchers")
 	registerFlags()
 	flag.Parse()
 	log.SetFlags(log.LstdFlags)
@@ -28,7 +33,15 @@ func main() {
 	for _, w := range cfg.Warnings {
 		log.Printf("config: %s", w)
 	}
+	systemPath := os.Getenv("PATH")
+	if systemPath == "" {
+		systemPath = defaultPath
+	}
+	if err := launchers.Build(*launcherDir, cfg.Commands, systemPath); err != nil {
+		log.Printf("launchers: %v", err)
+	}
 	reg := &session.Registry{}
+	services.Register(reg, &services.Deps{Config: cfg, LauncherDir: *launcherDir, SystemPath: systemPath})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

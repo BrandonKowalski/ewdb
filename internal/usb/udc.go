@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func findUDC(mountsPath, udcClassDir, ffsDir string) string {
+func findUDC(mountsPath, udcClassDir, ffsDir string) (string, string) {
 	ffsDir = filepath.Clean(ffsDir)
 	var instance string
 	var configfs []string
@@ -36,17 +36,18 @@ func findUDC(mountsPath, udcClassDir, ffsDir string) string {
 				if _, err := os.Stat(filepath.Join(g, "functions", "ffs."+instance)); err != nil {
 					continue
 				}
-				b, err := os.ReadFile(filepath.Join(g, "UDC"))
+				file := filepath.Join(g, "UDC")
+				b, err := os.ReadFile(file)
 				if err != nil {
-					return ""
+					return "", ""
 				}
-				return strings.TrimSpace(string(b))
+				return strings.TrimSpace(string(b)), file
 			}
 		}
 	}
 	entries, err := os.ReadDir(udcClassDir)
 	if err != nil || len(entries) != 1 {
-		return ""
+		return "", ""
 	}
-	return entries[0].Name()
+	return entries[0].Name(), ""
 }

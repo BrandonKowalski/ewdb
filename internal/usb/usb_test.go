@@ -119,9 +119,9 @@ func TestFindUDCMatchesGadgetByFFSInstance(t *testing.T) {
 	udcDir := filepath.Join(root, "udc")
 	writeFile(t, filepath.Join(udcDir, "fcc00000.dwc3", "soft_connect"), "")
 	writeFile(t, filepath.Join(udcDir, "other.udc", "soft_connect"), "")
-	got := findUDC(mounts, udcDir, "/dev/usb-ffs/adb/")
-	if got != "fcc00000.dwc3" {
-		t.Fatalf("findUDC = %q", got)
+	got, file := findUDC(mounts, udcDir, "/dev/usb-ffs/adb/")
+	if got != "fcc00000.dwc3" || file != filepath.Join(cfs, "usb_gadget", "g1", "UDC") {
+		t.Fatalf("findUDC = %q, %q", got, file)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestFindUDCUnboundGadget(t *testing.T) {
 	writeFile(t, filepath.Join(cfs, "usb_gadget", "g1", "functions", "ffs.adb", "x"), "")
 	udcDir := filepath.Join(root, "udc")
 	writeFile(t, filepath.Join(udcDir, "fcc00000.dwc3", "soft_connect"), "")
-	if got := findUDC(mounts, udcDir, "/dev/usb-ffs/adb"); got != "" {
+	if got, _ := findUDC(mounts, udcDir, "/dev/usb-ffs/adb"); got != "" {
 		t.Fatalf("findUDC = %q, want none", got)
 	}
 }
@@ -145,11 +145,11 @@ func TestFindUDCFallsBackToOnlyUDC(t *testing.T) {
 	writeFile(t, mounts, "adb /dev/usb-ffs/adb functionfs rw 0 0\n")
 	udcDir := filepath.Join(root, "udc")
 	writeFile(t, filepath.Join(udcDir, "musb-hdrc.0", "soft_connect"), "")
-	if got := findUDC(mounts, udcDir, "/dev/usb-ffs/adb"); got != "musb-hdrc.0" {
+	if got, _ := findUDC(mounts, udcDir, "/dev/usb-ffs/adb"); got != "musb-hdrc.0" {
 		t.Fatalf("findUDC = %q", got)
 	}
 	writeFile(t, filepath.Join(udcDir, "second", "soft_connect"), "")
-	if got := findUDC(mounts, udcDir, "/dev/usb-ffs/adb"); got != "" {
+	if got, _ := findUDC(mounts, udcDir, "/dev/usb-ffs/adb"); got != "" {
 		t.Fatalf("findUDC with two UDCs = %q, want none", got)
 	}
 }

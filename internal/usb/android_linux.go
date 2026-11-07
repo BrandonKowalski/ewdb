@@ -24,11 +24,16 @@ type androidEndpoint struct {
 }
 
 func openAndroid(path string) (*androidEndpoint, error) {
+	devnull, err := openDevNull()
+	if err != nil {
+		return nil, err
+	}
 	fd, err := openFile(path, unix.O_RDWR|unix.O_CLOEXEC)
 	if err != nil {
+		unix.Close(devnull)
 		return nil, fmt.Errorf("usb: open %s: %w", path, err)
 	}
-	return &androidEndpoint{path: path, fd: fd, devnull: openDevNull()}, nil
+	return &androidEndpoint{path: path, fd: fd, devnull: devnull}, nil
 }
 
 func (e *androidEndpoint) Next(ctx context.Context) (session.Transport, error) {

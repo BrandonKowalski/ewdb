@@ -19,6 +19,15 @@ func seqpacket(t *testing.T) (int, int) {
 	return fds[0], fds[1]
 }
 
+func devNull(t *testing.T) int {
+	t.Helper()
+	fd, err := openDevNull()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fd
+}
+
 func encode(t *testing.T, m wire.Message) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -38,7 +47,7 @@ func sendRecord(t *testing.T, fd int, p []byte) {
 func TestTransportReadsHeaderThenPayloadAndSkipsZeroLengthPackets(t *testing.T) {
 	dev, host := seqpacket(t)
 	defer unix.Close(host)
-	tr := newTransport(dev, dev, openDevNull(), ffsChunk, ffsChunk, true)
+	tr := newTransport(dev, dev, devNull(t), ffsChunk, ffsChunk, true)
 	defer tr.Close()
 	payload := bytes.Repeat([]byte{0xab}, 2*ffsChunk)
 	raw := encode(t, wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload})
@@ -66,7 +75,7 @@ func TestTransportReadsHeaderThenPayloadAndSkipsZeroLengthPackets(t *testing.T) 
 func TestTransportWritesHeaderAndPayloadAsSeparateTransfers(t *testing.T) {
 	dev, host := seqpacket(t)
 	defer unix.Close(host)
-	tr := newTransport(dev, dev, openDevNull(), ffsChunk, ffsChunk, true)
+	tr := newTransport(dev, dev, devNull(t), ffsChunk, ffsChunk, true)
 	defer tr.Close()
 	payload := bytes.Repeat([]byte{7}, ffsChunk+100)
 	go tr.Write(wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload})
@@ -100,7 +109,7 @@ func TestCloseUnblocksPendingReadAndFinishes(t *testing.T) {
 				wfd = rfd
 			}
 			defer unix.Close(peer)
-			tr := newTransport(rfd, wfd, openDevNull(), androidChunk, androidChunk, kind == "pipe")
+			tr := newTransport(rfd, wfd, devNull(t), androidChunk, androidChunk, kind == "pipe")
 			errc := make(chan error, 1)
 			go func() {
 				_, err := tr.Read()

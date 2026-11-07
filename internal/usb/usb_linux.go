@@ -33,12 +33,12 @@ func openTarget(t target) (Endpoint, error) {
 	return nil, fmt.Errorf("%w %q", ErrBadSpec, t.kind)
 }
 
-func openDevNull() int {
+func openDevNull() (int, error) {
 	fd, err := openFile("/dev/null", unix.O_RDWR|unix.O_CLOEXEC)
 	if err != nil {
-		return -1
+		return -1, fmt.Errorf("usb: open /dev/null: %w", err)
 	}
-	return fd
+	return fd, nil
 }
 
 func openFile(path string, flags int) (int, error) {
@@ -246,11 +246,9 @@ func (t *transport) Close() error {
 		t.mu.Lock()
 		t.closed = true
 		t.mu.Unlock()
-		if t.devnull >= 0 {
-			unix.Dup3(t.devnull, t.rfd, unix.O_CLOEXEC)
-			if t.wfd != t.rfd {
-				unix.Dup3(t.devnull, t.wfd, unix.O_CLOEXEC)
-			}
+		unix.Dup3(t.devnull, t.rfd, unix.O_CLOEXEC)
+		if t.wfd != t.rfd {
+			unix.Dup3(t.devnull, t.wfd, unix.O_CLOEXEC)
 		}
 		go t.reap()
 	})

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,29 +51,44 @@ type ffsEndpoint struct {
 	ep0     int
 	devnull int
 
-	mu        sync.Mutex
-	enabled   bool
-	suspended bool
-	gen       uint64
-	changed   chan struct{}
-	cur       *transport
+	open      func(gen uint64) (*transport, error)
+	reconnect func(ctx context.Context) bool
+
+	mu      sync.Mutex
+	enabled bool
+	gen     uint64
+	changed chan struct{}
+	cur     *transport
 
 	last *transport
 }
 
 func openFFS(dir string) (*ffsEndpoint, error) {
+	devnull, err := openDevNull()
+	if err != nil {
+		return nil, err
+	}
 	path := filepath.Join(dir, "ep0")
 	ep0, err := openFile(path, unix.O_RDWR|unix.O_CLOEXEC)
 	if err != nil {
+		unix.Close(devnull)
 		return nil, fmt.Errorf("usb: open %s: %w", path, err)
 	}
 	if err := writeDescriptors(ep0); err != nil {
 		unix.Close(ep0)
+		unix.Close(devnull)
 		return nil, fmt.Errorf("usb: %s: %w", path, err)
 	}
-	e := &ffsEndpoint{dir: dir, ep0: ep0, devnull: openDevNull(), changed: make(chan struct{})}
+	e := newFFSEndpoint(dir, ep0, devnull)
 	go e.monitor()
 	return e, nil
+}
+
+func newFFSEndpoint(dir string, ep0, devnull int) *ffsEndpoint {
+	e := &ffsEndpoint{dir: dir, ep0: ep0, devnull: devnull, changed: make(chan struct{})}
+	e.open = e.openTransport
+	e.reconnect = e.softReconnect
+	return e
 }
 
 func writeDescriptors(ep0 int) error {
@@ -124,22 +140,19 @@ func (e *ffsEndpoint) monitor() {
 
 func (e *ffsEndpoint) event(ev []byte) {
 	typ := ev[8]
-	if typ != evSetup {
-		log.Printf("usb: %s", eventNames[typ])
+	if name, ok := eventNames[typ]; !ok {
+		log.Printf("usb: unknown event %d", typ)
+	} else if typ != evSetup {
+		log.Printf("usb: %s", name)
 	}
 	switch typ {
 	case evEnable:
 		e.update(true, func() {
 			e.enabled = true
-			e.suspended = false
 			e.gen++
 		})
 	case evDisable, evUnbind:
 		e.update(true, func() { e.enabled = false })
-	case evSuspend:
-		e.update(true, func() { e.suspended = true })
-	case evResume:
-		e.update(false, func() { e.suspended = false })
 	case evSetup:
 		e.setup(ev)
 	}
@@ -180,15 +193,15 @@ func (e *ffsEndpoint) setup(ev []byte) {
 }
 
 type ffsState struct {
-	enabled, suspended bool
-	gen                uint64
-	changed            chan struct{}
+	enabled bool
+	gen     uint64
+	changed chan struct{}
 }
 
 func (e *ffsEndpoint) state() ffsState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return ffsState{e.enabled, e.suspended, e.gen, e.changed}
+	return ffsState{e.enabled, e.gen, e.changed}
 }
 
 func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
@@ -208,12 +221,12 @@ func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
 	for {
 		s := e.state()
 		wait := time.Duration(-1)
-		if s.enabled && !s.suspended {
+		if s.enabled {
 			now := time.Now()
 			fresh := !hadPrev || s.gen != prevGen
 			switch {
 			case fresh || (reconnected && !now.Before(fallback)):
-				t, err := e.openTransport(s.gen)
+				t, err := e.open(s.gen)
 				if err == nil {
 					if e.register(t) {
 						return t, nil
@@ -229,7 +242,7 @@ func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
 			case !reconnected:
 				reconnected = true
 				fallback = time.Now()
-				if e.reconnect() {
+				if e.reconnect(ctx) {
 					fallback = time.Now().Add(reconnectWait)
 				}
 				continue
@@ -261,7 +274,7 @@ func waitChange(ctx context.Context, changed <-chan struct{}, wait time.Duration
 
 func (e *ffsEndpoint) register(t *transport) bool {
 	e.mu.Lock()
-	ok := e.enabled && !e.suspended && e.gen == t.gen
+	ok := e.enabled && e.gen == t.gen
 	if ok {
 		e.cur = t
 	}
@@ -287,8 +300,8 @@ func (e *ffsEndpoint) openTransport(gen uint64) (*transport, error) {
 	return t, nil
 }
 
-func (e *ffsEndpoint) reconnect() bool {
-	udc := findUDC(procMounts, udcClass, e.dir)
+func (e *ffsEndpoint) softReconnect(ctx context.Context) bool {
+	udc, udcFile := findUDC(procMounts, udcClass, e.dir)
 	if udc == "" {
 		log.Print("usb: no UDC found to reconnect; waiting for the host")
 		return false
@@ -299,17 +312,26 @@ func (e *ffsEndpoint) reconnect() bool {
 		return false
 	}
 	log.Printf("usb: reconnecting %s so the host starts a new connection", udc)
-	time.Sleep(disconnectHold)
+	sleepCtx(ctx, disconnectHold)
 	for i := 1; ; i++ {
 		err := writeSysfs(path, "connect")
 		if err == nil {
 			return true
 		}
-		if i == connectAttempts {
+		if udcFile != "" {
+			if b, rerr := os.ReadFile(udcFile); rerr == nil && strings.TrimSpace(string(b)) == "" {
+				log.Printf("usb: %s was unbound; it connects again when rebound", udc)
+				return true
+			}
+		}
+		if i == connectAttempts || ctx.Err() != nil {
 			log.Printf("usb: %s: %v", path, err)
 			return true
 		}
-		time.Sleep(connectRetry)
+		if sleepCtx(ctx, connectRetry) != nil {
+			log.Printf("usb: %s: %v", path, err)
+			return true
+		}
 	}
 }
 

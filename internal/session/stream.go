@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"ewdb/internal/wire"
 )
@@ -26,8 +27,7 @@ type Stream struct {
 
 	writeMu sync.Mutex
 
-	sendMu     sync.Mutex
-	sendClosed bool
+	sendClosed atomic.Bool
 }
 
 func newStream(s *Session, local, remote uint32) *Stream {
@@ -60,12 +60,7 @@ func (st *Stream) peer() uint32 {
 }
 
 func (st *Stream) send(m wire.Message) error {
-	st.sendMu.Lock()
-	defer st.sendMu.Unlock()
-	if st.sendClosed {
-		return io.ErrClosedPipe
-	}
-	return st.sess.c.write(m)
+	return st.sess.c.writeFor(st.sess, &st.sendClosed, m)
 }
 
 func (st *Stream) Read(p []byte) (int, error) {
@@ -140,13 +135,10 @@ func (st *Stream) CloseWrite() error {
 }
 
 func (st *Stream) Close() error {
-	st.sendMu.Lock()
 	var err error
-	if !st.sendClosed {
-		st.sendClosed = true
-		err = st.sess.c.write(wire.Message{Command: wire.CLSE, Arg0: st.local, Arg1: st.peer()})
+	if st.sendClosed.CompareAndSwap(false, true) {
+		err = st.sess.c.writeFor(st.sess, nil, wire.Message{Command: wire.CLSE, Arg0: st.local, Arg1: st.peer()})
 	}
-	st.sendMu.Unlock()
 	st.finish()
 	return err
 }
@@ -199,8 +191,6 @@ func (st *Stream) onData(data []byte) {
 }
 
 func (st *Stream) onRemoteClose() {
-	st.sendMu.Lock()
-	st.sendClosed = true
-	st.sendMu.Unlock()
+	st.sendClosed.Store(true)
 	st.finish()
 }

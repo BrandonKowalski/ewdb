@@ -533,3 +533,94 @@ func TestSecondWriteWaitsForOkay(t *testing.T) {
 	h.send(wire.Message{Command: wire.OKAY, Arg0: 6, Arg1: ours})
 	h.expectMsg(wire.CLSE, ours, 6, "")
 }
+
+type stallPipe struct {
+	*pipe
+	readErr chan error
+	stalled chan struct{}
+	once    sync.Once
+}
+
+func newStallPipe() *stallPipe {
+	return &stallPipe{pipe: newPipe(), readErr: make(chan error), stalled: make(chan struct{})}
+}
+
+func (p *stallPipe) Read() (wire.Message, error) {
+	select {
+	case m := <-p.in:
+		return m, nil
+	case err := <-p.readErr:
+		return wire.Message{}, err
+	case <-p.done:
+		return wire.Message{}, io.EOF
+	}
+}
+
+func (p *stallPipe) Write(m wire.Message) error {
+	if m.Command != wire.WRTE {
+		return p.pipe.Write(m)
+	}
+	p.once.Do(func() { close(p.stalled) })
+	<-p.done
+	return io.ErrClosedPipe
+}
+
+func stallingRegistry(eof chan struct{}) *Registry {
+	reg := &Registry{}
+	reg.Handle("w:", func(ctx context.Context, s *Stream, arg string) {
+		s.Write([]byte("stuck"))
+	})
+	reg.Handle("r:", func(ctx context.Context, s *Stream, arg string) {
+		io.ReadAll(s)
+		close(eof)
+	})
+	return reg
+}
+
+func TestReadErrorWithStalledWriteReturns(t *testing.T) {
+	p := newStallPipe()
+	defer p.Close()
+	reg := stallingRegistry(make(chan struct{}))
+	errc := make(chan error, 1)
+	go func() { errc <- Serve(context.Background(), p, testConfig(), reg) }()
+	h := &harness{t: t, p: p.pipe, reg: reg, errc: errc}
+	h.send(wire.Message{Command: wire.CNXN, Arg0: wire.Version, Arg1: 4096})
+	h.expect()
+	h.open(1, "w:")
+	<-p.stalled
+	p.readErr <- errors.New("wire: bad magic")
+	select {
+	case err := <-errc:
+		if err == nil || err.Error() != "wire: bad magic" {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve deadlocked on a stalled write")
+	}
+}
+
+func TestConnectWithStalledWriteResetsStreams(t *testing.T) {
+	p := newStallPipe()
+	eof := make(chan struct{})
+	reg := stallingRegistry(eof)
+	errc := make(chan error, 1)
+	go func() { errc <- Serve(context.Background(), p, testConfig(), reg) }()
+	h := &harness{t: t, p: p.pipe, reg: reg, errc: errc}
+	h.send(wire.Message{Command: wire.CNXN, Arg0: wire.Version, Arg1: 4096})
+	h.expect()
+	h.open(1, "r:")
+	h.open(2, "w:")
+	<-p.stalled
+	h.send(wire.Message{Command: wire.CNXN, Arg0: wire.Version, Arg1: 4096})
+	select {
+	case <-eof:
+	case <-time.After(time.Second):
+		t.Error("reset waited on a stalled write")
+	}
+	p.Close()
+	select {
+	case <-errc:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+}

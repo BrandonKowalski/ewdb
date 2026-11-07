@@ -3,8 +3,10 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"ewdb/internal/config"
 	"ewdb/internal/wire"
@@ -66,12 +68,22 @@ func (c *conn) write(m wire.Message) error {
 	return c.t.Write(m)
 }
 
+func (c *conn) writeFor(s *Session, closed *atomic.Bool, m wire.Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s.dead.Load() || (closed != nil && closed.Load()) {
+		return io.ErrClosedPipe
+	}
+	return c.t.Write(m)
+}
+
 type Session struct {
 	c       *conn
 	reg     *Registry
 	maxdata uint32
 	ctx     context.Context
 	cancel  context.CancelFunc
+	dead    atomic.Bool
 
 	mu      sync.Mutex
 	streams map[uint32]*Stream
@@ -109,10 +121,10 @@ func Serve(ctx context.Context, t Transport, c *config.Config, r *Registry) erro
 		}
 	}
 	stop()
+	t.Close()
 	if s != nil {
 		s.reset()
 	}
-	t.Close()
 	cn.wg.Wait()
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -137,7 +149,7 @@ func (s *Session) handle(m wire.Message) {
 		if st := s.stream(m.Arg1); st != nil {
 			st.onOkay(m.Arg0)
 		} else if m.Arg0 != 0 && m.Arg1 != 0 {
-			s.c.write(wire.Message{Command: wire.CLSE, Arg0: m.Arg1, Arg1: m.Arg0})
+			s.c.writeFor(s, nil, wire.Message{Command: wire.CLSE, Arg0: m.Arg1, Arg1: m.Arg0})
 		}
 	case wire.WRTE:
 		if st := s.stream(m.Arg1); st != nil && st.peer() == m.Arg0 {
@@ -159,7 +171,7 @@ func (s *Session) open(m wire.Message) {
 	name := strings.TrimRight(string(m.Data), "\x00")
 	h, arg, ok := s.reg.lookup(name)
 	if !ok {
-		s.c.write(wire.Message{Command: wire.CLSE, Arg1: m.Arg0})
+		s.c.writeFor(s, nil, wire.Message{Command: wire.CLSE, Arg1: m.Arg0})
 		return
 	}
 	st, err := s.newStream(m.Arg0)
@@ -208,6 +220,7 @@ func (s *Session) remove(id uint32) {
 }
 
 func (s *Session) reset() {
+	s.dead.Store(true)
 	s.mu.Lock()
 	s.closed = true
 	streams := s.streams
@@ -215,9 +228,7 @@ func (s *Session) reset() {
 	s.mu.Unlock()
 	s.cancel()
 	for _, st := range streams {
-		st.sendMu.Lock()
-		st.sendClosed = true
-		st.sendMu.Unlock()
+		st.sendClosed.Store(true)
 		st.finish()
 	}
 }

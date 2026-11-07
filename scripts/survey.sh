@@ -154,7 +154,7 @@ add_forward() {
 
 t_forward() {
 	add_forward
-	banner=$(perl -e 'alarm shift; exec @ARGV' 8 nc -w 3 127.0.0.1 "$port" </dev/null 2>/dev/null | head -n 1)
+	banner=$( (sleep 3) | perl -e 'alarm shift; exec @ARGV' 8 nc -w 3 127.0.0.1 "$port" 2>/dev/null | head -n 1)
 	A forward --remove "tcp:$port" >/dev/null 2>&1 || fail "forward --remove failed"
 	case "$banner" in
 	SSH-*) return 0 ;;

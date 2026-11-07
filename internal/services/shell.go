@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/creack/pty"
 
@@ -108,9 +109,44 @@ func (p *proc) closeStdin() {
 	}
 }
 
+func openPty() (*os.File, *os.File, error) {
+	m, tty, err := pty.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	fd, err := syscall.Dup(int(m.Fd()))
+	m.Close()
+	if err == nil {
+		syscall.CloseOnExec(fd)
+		err = syscall.SetNonblock(fd, true)
+		if err != nil {
+			syscall.Close(fd)
+		}
+	}
+	if err != nil {
+		tty.Close()
+		return nil, nil, err
+	}
+	return os.NewFile(uintptr(fd), "ptmx"), tty, nil
+}
+
+type winsize struct {
+	rows, cols, x, y uint16
+}
+
+func setWinsize(f *os.File, ws winsize) {
+	rc, err := f.SyscallConn()
+	if err != nil {
+		return
+	}
+	rc.Control(func(fd uintptr) {
+		syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(&ws)))
+	})
+}
+
 func open(cmd *exec.Cmd, a shellArgs) (*proc, error) {
 	if a.pty {
-		m, tty, err := pty.Open()
+		m, tty, err := openPty()
 		if err != nil {
 			return nil, err
 		}
@@ -241,7 +277,7 @@ func pump(r io.Reader, p *proc, v2 bool, first chan<- struct{}) {
 			if p.pty != nil {
 				var rows, cols, x, y uint16
 				if c, _ := fmt.Sscanf(strings.TrimRight(string(data), "\x00"), "%dx%d,%dx%d", &rows, &cols, &x, &y); c == 4 {
-					pty.Setsize(p.pty, &pty.Winsize{Rows: rows, Cols: cols, X: x, Y: y})
+					setWinsize(p.pty, winsize{rows, cols, x, y})
 				}
 			}
 		}

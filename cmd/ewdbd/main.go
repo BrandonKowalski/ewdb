@@ -38,7 +38,8 @@ func main() {
 		systemPath = defaultPath
 	}
 	if err := launchers.Build(*launcherDir, cfg.Commands, systemPath); err != nil {
-		log.Printf("launchers: %v", err)
+		log.Printf("launchers: %v; running without launchers", err)
+		*launcherDir = ""
 	}
 	reg := &session.Registry{}
 	services.Register(reg, &services.Deps{Config: cfg, LauncherDir: *launcherDir, SystemPath: systemPath})

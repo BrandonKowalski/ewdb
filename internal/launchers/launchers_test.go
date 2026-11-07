@@ -129,6 +129,13 @@ func TestBuildRebuildsFromScratch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "new")); err != nil {
 		t.Fatal(err)
 	}
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("leftovers next to %s: %v", dir, entries)
+	}
 }
 
 func TestBuildSkipsNamesWithSlash(t *testing.T) {
@@ -138,5 +145,35 @@ func TestBuildSkipsNamesWithSlash(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escape")); !os.IsNotExist(err) {
 		t.Fatalf("launcher escaped the directory: %v", err)
+	}
+}
+
+func TestBuildRefusesForeignDirectory(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "keep")
+	if err := os.WriteFile(keep, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Build(dir, map[string]string{"getprop": "true"}, ""); err == nil {
+		t.Fatal("Build accepted a directory it did not create")
+	}
+	if b, err := os.ReadFile(keep); err != nil || string(b) != "mine" {
+		t.Fatalf("keep = %q, %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "getprop")); !os.IsNotExist(err) {
+		t.Fatalf("launcher written into foreign directory: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("leftovers next to %s: %v", dir, entries)
+	}
+}
+
+func TestBuildRefusesEmptyForeignDirectory(t *testing.T) {
+	if err := Build(t.TempDir(), nil, ""); err == nil {
+		t.Fatal("Build accepted an existing directory without its marker")
 	}
 }

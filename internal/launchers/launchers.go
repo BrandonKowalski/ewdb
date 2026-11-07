@@ -1,6 +1,7 @@
 package launchers
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,11 +9,75 @@ import (
 
 var Android = []string{"am", "pm", "monkey", "content", "ime", "uiautomator", "run-as", "cmd", "settings", "svc", "wm", "dumpsys", "setprop", "screenrecord", "logcat", "getprop", "input", "screencap", "bugreportz"}
 
+const marker = ".ewdb-launchers"
+
 func Build(dir string, commands map[string]string, systemPath string) error {
-	if err := os.RemoveAll(dir); err != nil {
+	dir = filepath.Clean(dir)
+	exists, err := owned(dir)
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	parent, base := filepath.Split(dir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp(parent, "."+base+".new-")
+	if err != nil {
+		return err
+	}
+	if err := fill(tmp, commands, systemPath); err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+	if !exists {
+		if err := os.Rename(tmp, dir); err != nil {
+			os.RemoveAll(tmp)
+			return err
+		}
+		return nil
+	}
+	old, err := os.MkdirTemp(parent, "."+base+".old-")
+	if err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+	stale := filepath.Join(old, base)
+	if err := os.Rename(dir, stale); err != nil {
+		os.RemoveAll(tmp)
+		os.Remove(old)
+		return err
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		os.Rename(stale, dir)
+		os.RemoveAll(tmp)
+		os.Remove(old)
+		return err
+	}
+	return os.RemoveAll(old)
+}
+
+func owned(dir string) (bool, error) {
+	st, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !st.IsDir() {
+		return false, fmt.Errorf("%s exists and is not a launcher directory", dir)
+	}
+	if m, err := os.Lstat(filepath.Join(dir, marker)); err != nil || !m.Mode().IsRegular() {
+		return false, fmt.Errorf("%s exists and has no %s marker; not replacing it", dir, marker)
+	}
+	return true, nil
+}
+
+func fill(dir string, commands map[string]string, systemPath string) error {
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, marker), nil, 0o644); err != nil {
 		return err
 	}
 	for name, command := range commands {

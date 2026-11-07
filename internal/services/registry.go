@@ -26,8 +26,12 @@ func Env(d *Deps, term string) []string {
 	if term == "" {
 		term = "dumb"
 	}
+	path := d.SystemPath
+	if d.LauncherDir != "" {
+		path = d.LauncherDir + ":" + path
+	}
 	return []string{
-		"PATH=" + d.LauncherDir + ":" + d.SystemPath,
+		"PATH=" + path,
 		"HOME=" + home,
 		"TERM=" + term,
 		"EWDB_CONFIG=" + d.Config.Path,

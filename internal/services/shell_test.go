@@ -200,6 +200,10 @@ func TestEnv(t *testing.T) {
 	if got := Env(d, "xterm"); got[2] != "TERM=xterm" {
 		t.Fatalf("TERM = %q", got[2])
 	}
+	d.LauncherDir = ""
+	if got := Env(d, ""); got[0] != "PATH="+d.SystemPath {
+		t.Fatalf("PATH without launchers = %q", got[0])
+	}
 }
 
 func TestRawV2SeparatesStreamsAndExitsLast(t *testing.T) {
@@ -344,10 +348,6 @@ func cancelMidCommand(t *testing.T, a shellArgs, hold string) {
 	if hold == "group" && !gone(pid, 3*time.Second) {
 		t.Fatalf("grandchild %d still alive", pid)
 	}
-	if hold == "escaped" {
-		syscall.Kill(pid, syscall.SIGKILL)
-		gone(pid, 3*time.Second)
-	}
 	goroutinesSettle(t, base)
 }
 
@@ -367,11 +367,18 @@ func TestCancelNonV2WithGrandchild(t *testing.T) {
 	cancelMidCommand(t, shellArgs{command: "sleep 300 & echo $!; wait"}, "group")
 }
 
-func TestCancelWithEscapedGrandchildHoldingPipes(t *testing.T) {
+func holdCommand(t *testing.T) string {
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := "'" + strings.ReplaceAll(filepath.Clean(exe), "'", `'\''`) + "'"
-	cancelMidCommand(t, shellArgs{v2: true, command: "EWDB_HOLD=1 " + q + " & wait"}, "escaped")
+	return "EWDB_HOLD=1 '" + strings.ReplaceAll(filepath.Clean(exe), "'", `'\''`) + "' & wait"
+}
+
+func TestCancelWithEscapedGrandchildHoldingPipes(t *testing.T) {
+	cancelMidCommand(t, shellArgs{v2: true, command: holdCommand(t)}, "escaped")
+}
+
+func TestCancelWithEscapedGrandchildHoldingPty(t *testing.T) {
+	cancelMidCommand(t, shellArgs{v2: true, pty: true, command: holdCommand(t)}, "escaped")
 }

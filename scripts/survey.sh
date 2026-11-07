@@ -12,11 +12,14 @@ for a in "$@"; do
 done
 
 if [ -z "$SERIAL" ]; then
-	SERIAL=$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')
-fi
-if [ -z "$SERIAL" ]; then
-	echo "no device: set SERIAL" >&2
-	exit 2
+	DEVS=$(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
+	if [ -n "$DEVS" ] && [ "$(printf '%s\n' "$DEVS" | wc -l | tr -d ' ')" -eq 1 ]; then
+		SERIAL=$DEVS
+	else
+		echo "usage: SERIAL=<serial> sh $0 [--disruptive]" >&2
+		echo "exactly one attached device is needed when SERIAL is unset" >&2
+		exit 2
+	fi
 fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ewdb-survey.XXXXXX") || exit 2
@@ -24,6 +27,11 @@ RTAG=/tmp/ewdb-survey-$$
 FAILS=0
 
 cleanup() {
+	if [ -f "$TMP/fwds" ]; then
+		while read -r fp; do
+			perl -e 'alarm shift; exec @ARGV' 15 adb -s "$SERIAL" forward --remove "tcp:$fp" >/dev/null 2>&1
+		done <"$TMP/fwds"
+	fi
 	perl -e 'alarm shift; exec @ARGV' 15 adb -s "$SERIAL" shell "rm -rf $RTAG*" >/dev/null 2>&1
 	rm -rf "$TMP"
 }
@@ -51,12 +59,12 @@ row() {
 
 fail() {
 	printf '%s\n' "$*"
-	return 1
+	exit 1
 }
 
 t_devices() {
 	out=$(A devices -l 2>&1) || fail "exit $?: $out"
-	printf '%s\n' "$out" | grep -q "$SERIAL" || fail "serial not listed: $out"
+	printf '%s\n' "$out" | grep -qF "$SERIAL" || fail "serial not listed: $out"
 }
 
 t_get_state() {
@@ -111,6 +119,7 @@ t_push_pull() {
 	out=$(A push "$TMP/blob" "$RTAG-blob" 2>&1) || fail "push exit $?: $out"
 	out=$(A pull "$RTAG-blob" "$TMP/back" 2>&1) || fail "pull exit $?: $out"
 	got=$(shasum -a 256 "$TMP/back" | awk '{print $1}')
+	[ -n "$want" ] || fail "no local hash"
 	[ "$want" = "$got" ] || fail "hash mismatch after pull-back"
 	rhash=$(A shell "sha256sum $RTAG-blob" 2>/dev/null | awk '{print $1}')
 	if [ -n "$rhash" ] && [ "$rhash" != "$want" ]; then
@@ -135,13 +144,18 @@ t_pull_missing() {
 	[ $? -ne 0 ] || fail "pull of a missing file succeeded"
 }
 
-t_forward() {
+add_forward() {
 	port=$(A forward tcp:0 tcp:22 2>&1) || fail "forward exit $?: $port"
 	case "$port" in
 	'' | *[!0-9]*) fail "forward printed $port" ;;
 	esac
+	echo "$port" >>"$TMP/fwds"
+}
+
+t_forward() {
+	add_forward
 	banner=$(perl -e 'alarm shift; exec @ARGV' 8 nc -w 3 127.0.0.1 "$port" </dev/null 2>/dev/null | head -n 1)
-	A forward --remove "tcp:$port" >/dev/null 2>&1
+	A forward --remove "tcp:$port" >/dev/null 2>&1 || fail "forward --remove failed"
 	case "$banner" in
 	SSH-*) return 0 ;;
 	*) fail "no SSH banner on device 127.0.0.1:22 (got '$banner')" ;;
@@ -149,14 +163,14 @@ t_forward() {
 }
 
 t_forward_list() {
-	A forward tcp:0 tcp:22 >"$TMP/fp" 2>&1 || fail "forward exit $?: $(cat "$TMP/fp")"
-	port=$(cat "$TMP/fp")
+	add_forward
 	out=$(A forward --list 2>&1) || fail "list exit $?: $out"
+	printf '%s\n' "$out" | grep -qF "tcp:$port" || fail "forward not listed: $out"
 	A forward --remove "tcp:$port" >/dev/null 2>&1 || fail "remove failed"
-	printf '%s\n' "$out" | grep -q "tcp:$port" || fail "forward not listed: $out"
 	out=$(A forward --list 2>&1)
-	printf '%s\n' "$out" | grep -q "tcp:$port" && fail "forward still listed after remove"
-	return 0
+	if printf '%s\n' "$out" | grep -qF "tcp:$port"; then
+		fail "forward still listed after remove"
+	fi
 }
 
 t_reverse_list() {
@@ -194,26 +208,28 @@ t_input() {
 
 t_tcpip() {
 	out=$(A tcpip 5555 2>&1)
-	[ -n "$out" ] || fail "no message"
-	A get-state >"$TMP/st" 2>&1 || fail "session lost: $(cat "$TMP/st")"
-	[ "$(cat "$TMP/st")" = device ] || fail "state $(cat "$TMP/st")"
+	case "$out" in
+	*"Wi-Fi adb is not available on this device"*) ;;
+	*) fail "unexpected message: $out" ;;
+	esac
 	A shell true >/dev/null 2>&1 || fail "shell failed after tcpip"
 }
 
 t_usb() {
 	out=$(A usb 2>&1)
-	[ -n "$out" ] || fail "no message"
+	case "$out" in
+	*"already running on USB"*) ;;
+	*) fail "unexpected message: $out" ;;
+	esac
 	A shell true >/dev/null 2>&1 || fail "shell failed after usb"
 }
 
 t_remount() {
-	out=$(A remount 2>&1)
-	[ -n "$out" ] || fail "no message"
+	out=$(A remount 2>&1) || fail "exit $?: $out"
 }
 
 t_verity() {
-	out=$(A disable-verity 2>&1)
-	[ -n "$out" ] || fail "no message"
+	out=$(A disable-verity 2>&1) || fail "exit $?: $out"
 }
 
 t_jdwp() {
@@ -224,15 +240,19 @@ t_jdwp() {
 
 wait_back() {
 	end=$(($(date +%s) + 90))
+	st=none
 	sleep 3
 	while [ "$(date +%s)" -lt "$end" ]; do
 		left=$((end - $(date +%s)))
+		[ "$left" -ge 1 ] || left=1
 		perl -e 'alarm shift; exec @ARGV' "$left" adb -s "$SERIAL" wait-for-device >/dev/null 2>&1
-		st=$(A get-state 2>/dev/null)
-		[ "$st" = device ] && return 0
+		st=$(A get-state 2>&1)
+		case "$st" in
+		device | recovery) return 0 ;;
+		esac
 		sleep 1
 	done
-	fail "device did not return within 90 s"
+	fail "device did not return within 90 s (last state: $st)"
 }
 
 t_reboot() {
@@ -279,15 +299,17 @@ row "screencap -p" t_screencap
 row "input keyevent DPAD_DOWN" t_input
 row "tcpip 5555" t_tcpip
 row "usb" t_usb
-row "remount" t_remount
-row "disable-verity" t_verity
 row "jdwp" t_jdwp
 
 if [ "$DISRUPTIVE" -eq 1 ]; then
+	row "remount" t_remount
+	row "disable-verity" t_verity
 	row "reboot" t_reboot
 	row "reboot bootloader" t_reboot_bootloader
 	row "reboot recovery" t_reboot_recovery
 else
+	row "remount" t_skip
+	row "disable-verity" t_skip
 	row "reboot" t_skip
 	row "reboot bootloader" t_skip
 	row "reboot recovery" t_skip

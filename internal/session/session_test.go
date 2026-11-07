@@ -624,3 +624,26 @@ func TestConnectWithStalledWriteResetsStreams(t *testing.T) {
 		t.Fatal("Serve did not return")
 	}
 }
+
+func TestSessionContextOutlivesStreamAndEndsOnReset(t *testing.T) {
+	got := make(chan context.Context, 1)
+	reg := &Registry{}
+	reg.Handle("ctx:", func(ctx context.Context, s *Stream, arg string) {
+		got <- s.Session().Context()
+	})
+	h := start(t, reg)
+	h.connect(4096)
+	ours := h.open(1, "ctx:")
+	sctx := <-got
+	h.expectMsg(wire.CLSE, ours, 1, "")
+	time.Sleep(50 * time.Millisecond)
+	if sctx.Err() != nil {
+		t.Fatal("session context ended with its stream")
+	}
+	h.connect(4096)
+	select {
+	case <-sctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("session context not cancelled by new CNXN")
+	}
+}

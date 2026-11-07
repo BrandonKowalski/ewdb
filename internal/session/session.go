@@ -257,3 +257,7 @@ func (s *Session) Dial(ctx context.Context, service string) (*Stream, error) {
 		return nil, ctx.Err()
 	}
 }
+
+func (s *Session) Context() context.Context {
+	return s.ctx
+}

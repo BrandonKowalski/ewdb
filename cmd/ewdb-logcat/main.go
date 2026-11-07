@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,20 +19,36 @@ const pollInterval = 200 * time.Millisecond
 type options struct {
 	dump  bool
 	clear bool
+	tail  int
 	tags  []string
 }
+
+const valueOptions = "bvtTnrfme"
 
 func parseArgs(args []string) options {
 	var o options
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if len(a) >= 2 && a[0] == '-' && strings.IndexByte(valueOptions, a[1]) >= 0 {
+			value := a[2:]
+			if value == "" && i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+			switch a[1] {
+			case 't':
+				o.dump = true
+				o.tail, _ = strconv.Atoi(value)
+			case 'T':
+				o.tail, _ = strconv.Atoi(value)
+			}
+			continue
+		}
 		switch {
 		case a == "-d":
 			o.dump = true
 		case a == "-c" || a == "-C":
 			o.clear = true
-		case a == "-v" || a == "-b":
-			i++
 		case strings.HasPrefix(a, "-"):
 		case a == "*:S":
 		default:
@@ -67,6 +84,32 @@ type follower struct {
 	opt     options
 	out     io.Writer
 	pending string
+	hold    bool
+	held    []string
+}
+
+func (f *follower) emit(line string) error {
+	if f.hold {
+		f.held = append(f.held, line)
+		if len(f.held) > f.opt.tail {
+			f.held = f.held[1:]
+		}
+		return nil
+	}
+	_, err := io.WriteString(f.out, line)
+	return err
+}
+
+func (f *follower) release() error {
+	f.hold = false
+	held := f.held
+	f.held = nil
+	for _, line := range held {
+		if _, err := io.WriteString(f.out, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (f *follower) feed(data []byte) error {
@@ -79,7 +122,7 @@ func (f *follower) feed(data []byte) error {
 		line := f.pending[:i+1]
 		f.pending = f.pending[i+1:]
 		if f.opt.keep(line) {
-			if _, err := io.WriteString(f.out, line); err != nil {
+			if err := f.emit(line); err != nil {
 				return err
 			}
 		}
@@ -127,15 +170,19 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	fol := &follower{opt: opt, out: stdout}
+	fol := &follower{opt: opt, out: stdout, hold: opt.tail > 0}
 	var pos int64
 	if drain(file, fol, &pos) != nil {
 		return 0
 	}
 	if opt.dump {
 		if fol.pending != "" && opt.keep(fol.pending) {
-			io.WriteString(stdout, fol.pending)
+			fol.emit(fol.pending)
 		}
+		fol.release()
+		return 0
+	}
+	if fol.release() != nil {
 		return 0
 	}
 	opened, err := file.Stat()

@@ -52,7 +52,9 @@ func setup(t *testing.T, content string) string {
 
 func runDump(args ...string) (string, string, int) {
 	var o, e bytes.Buffer
-	code := execute(context.Background(), args, &o, &e)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	code := execute(ctx, args, &o, &e)
 	return o.String(), e.String(), code
 }
 
@@ -155,4 +157,51 @@ func TestMissingFile(t *testing.T) {
 	if code != 1 || out != "" || errOut != "ewdb-logcat: no log at "+log+"\n" {
 		t.Fatalf("code %d out %q err %q", code, out, errOut)
 	}
+}
+
+func TestTailCountPrintsLastLinesAndExits(t *testing.T) {
+	setup(t, sample)
+	lines := strings.SplitAfter(sample, "\n")
+	for _, args := range [][]string{{"-t", "2"}, {"-t2"}, {"-t", "100"}} {
+		out, _, code := runDump(args...)
+		want := strings.Join(lines[2:], "")
+		if args[len(args)-1] == "100" {
+			want = sample
+		}
+		if code != 0 || out != want {
+			t.Fatalf("%v: code %d out %q", args, code, out)
+		}
+	}
+}
+
+func TestTailCountAppliesAfterTagFilter(t *testing.T) {
+	setup(t, sample)
+	out, _, _ := runDump("-t", "1", "frontend")
+	if out != "Nov  7 15:00:02 dsos user.info frontend[12]: pid tagged\n" {
+		t.Fatalf("out %q", out)
+	}
+}
+
+func TestOptionValuesAreNotTags(t *testing.T) {
+	setup(t, sample)
+	for _, args := range [][]string{{"-d", "-n", "4"}, {"-d", "-r", "16"}, {"-d", "-f", "/tmp/x"}, {"-d", "-m", "5"}, {"-d", "-e", "boot"}} {
+		out, _, _ := runDump(args...)
+		if out != sample {
+			t.Fatalf("%v: %q", args, out)
+		}
+	}
+}
+
+func TestRecentCountThenFollows(t *testing.T) {
+	log := setup(t, sample)
+	out, stop := startFollow(t, "-T", "1")
+	defer stop()
+	waitFor(t, out, "frontend2: other")
+	if strings.Contains(out.String(), "kernel:") {
+		t.Fatalf("printed more than the last line: %q", out.String())
+	}
+	f, _ := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("Nov  7 15:00:04 dsos user.info frontend: later\n")
+	f.Close()
+	waitFor(t, out, "frontend: later")
 }

@@ -31,6 +31,7 @@ const (
 	ffsChunk        = 16384
 	settleDelay     = 250 * time.Millisecond
 	disconnectHold  = 300 * time.Millisecond
+	minSettle       = 50 * time.Millisecond
 	reconnectWait   = 5 * time.Second
 	connectAttempts = 10
 	connectRetry    = 500 * time.Millisecond
@@ -307,32 +308,35 @@ func (e *ffsEndpoint) softReconnect(ctx context.Context) bool {
 		return false
 	}
 	path := filepath.Join(udcClass, udc, "soft_connect")
-	if err := writeSysfs(path, "disconnect"); err != nil {
-		log.Printf("usb: %s: %v; waiting for the host", path, err)
+	log.Printf("usb: reconnecting %s so the host starts a new connection", udc)
+	return cycleSoftConnect(ctx, udcFile, func(v string) error { return writeSysfs(path, v) })
+}
+
+func cycleSoftConnect(ctx context.Context, udcFile string, write func(string) error) bool {
+	if err := write("disconnect"); err != nil {
+		log.Printf("usb: soft_connect disconnect: %v; waiting for the host", err)
 		return false
 	}
-	log.Printf("usb: reconnecting %s so the host starts a new connection", udc)
-	sleepCtx(ctx, disconnectHold)
-	for i := 1; ; i++ {
-		err := writeSysfs(path, "connect")
-		if err == nil {
+	if sleepCtx(ctx, disconnectHold) != nil {
+		time.Sleep(minSettle)
+	}
+	var err error
+	for i := 1; i <= connectAttempts; i++ {
+		if i > 1 {
+			time.Sleep(connectRetry)
+		}
+		if err = write("connect"); err == nil {
 			return true
 		}
 		if udcFile != "" {
 			if b, rerr := os.ReadFile(udcFile); rerr == nil && strings.TrimSpace(string(b)) == "" {
-				log.Printf("usb: %s was unbound; it connects again when rebound", udc)
-				return true
+				log.Print("usb: UDC was unbound; it connects again when rebound")
+				return false
 			}
 		}
-		if i == connectAttempts || ctx.Err() != nil {
-			log.Printf("usb: %s: %v", path, err)
-			return true
-		}
-		if sleepCtx(ctx, connectRetry) != nil {
-			log.Printf("usb: %s: %v", path, err)
-			return true
-		}
 	}
+	log.Printf("usb: soft_connect connect: %v", err)
+	return false
 }
 
 func writeSysfs(path, value string) error {

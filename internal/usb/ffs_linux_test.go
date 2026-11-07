@@ -2,6 +2,7 @@ package usb
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -179,5 +180,51 @@ func TestFFSNextReturnsWhenContextEnds(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Next ignored ctx")
+	}
+}
+
+func TestSoftConnectRetriesConnectAfterContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var writes []string
+	connectFails := 1
+	write := func(v string) error {
+		writes = append(writes, v)
+		if v == "disconnect" {
+			cancel()
+			return nil
+		}
+		if connectFails > 0 {
+			connectFails--
+			return unix.EBUSY
+		}
+		return nil
+	}
+	if !cycleSoftConnect(ctx, "", write) {
+		t.Fatal("cycleSoftConnect reported no reconnect")
+	}
+	want := []string{"disconnect", "connect", "connect"}
+	if len(writes) != len(want) || writes[0] != want[0] || writes[1] != want[1] || writes[2] != want[2] {
+		t.Fatalf("writes %v, want %v", writes, want)
+	}
+}
+
+func TestSoftConnectStopsWhenUDCUnboundAndReportsFailure(t *testing.T) {
+	udcFile := t.TempDir() + "/UDC"
+	if err := os.WriteFile(udcFile, []byte("\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var connects int
+	write := func(v string) error {
+		if v == "connect" {
+			connects++
+			return unix.ENODEV
+		}
+		return nil
+	}
+	if cycleSoftConnect(context.Background(), udcFile, write) {
+		t.Fatal("cycleSoftConnect reported success without a connect")
+	}
+	if connects != 1 {
+		t.Fatalf("connect attempts %d, want 1", connects)
 	}
 }

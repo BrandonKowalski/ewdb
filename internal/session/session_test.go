@@ -647,3 +647,31 @@ func TestSessionContextOutlivesStreamAndEndsOnReset(t *testing.T) {
 		t.Fatal("session context not cancelled by new CNXN")
 	}
 }
+
+func TestResetClosesEveryStreamAndAcceptsNewConnect(t *testing.T) {
+	reg := &Registry{}
+	reg.Handle("wait:", func(ctx context.Context, s *Stream, arg string) {
+		<-ctx.Done()
+	})
+	reg.Handle("reconnect", func(ctx context.Context, s *Stream, arg string) {
+		s.Session().Reset()
+	})
+	h := start(t, reg)
+	h.connect(4096)
+	a := h.open(1, "wait:")
+	b := h.open(2, "wait:")
+	c := h.open(3, "reconnect")
+	closed := map[uint32]uint32{}
+	for i := 0; i < 3; i++ {
+		m := h.expect()
+		if m.Command != wire.CLSE {
+			t.Fatalf("got %08x want CLSE", m.Command)
+		}
+		closed[m.Arg1] = m.Arg0
+	}
+	if closed[1] != a || closed[2] != b || closed[3] != c {
+		t.Fatalf("closed %v", closed)
+	}
+	h.connect(4096)
+	h.open(4, "wait:")
+}

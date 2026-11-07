@@ -19,6 +19,7 @@ func Register(r *session.Registry, d *Deps) {
 	r.Handle("sync:", syncHandler())
 	r.Handle("reverse:", reverseHandler)
 	forwardHandlers(r)
+	miscHandlers(r, d)
 }
 
 func Env(d *Deps, term string) []string {

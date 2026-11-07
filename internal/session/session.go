@@ -233,6 +233,19 @@ func (s *Session) reset() {
 	}
 }
 
+func (s *Session) Reset() {
+	s.mu.Lock()
+	streams := make([]*Stream, 0, len(s.streams))
+	for _, st := range s.streams {
+		streams = append(streams, st)
+	}
+	s.mu.Unlock()
+	for _, st := range streams {
+		st.Close()
+	}
+	s.reset()
+}
+
 func (s *Session) Dial(ctx context.Context, service string) (*Stream, error) {
 	st, err := s.newStream(0)
 	if err != nil {

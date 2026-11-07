@@ -44,51 +44,94 @@ func sendRecord(t *testing.T, fd int, p []byte) {
 	}
 }
 
-func TestTransportReadsHeaderThenPayloadAndSkipsZeroLengthPackets(t *testing.T) {
+const chunk = 16384
+
+func readWithin(t *testing.T, tr *transport) wire.Message {
+	t.Helper()
+	type result struct {
+		m   wire.Message
+		err error
+	}
+	c := make(chan result, 1)
+	go func() {
+		m, err := tr.Read()
+		c <- result{m, err}
+	}()
+	select {
+	case r := <-c:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		return r.m
+	case <-time.After(2 * time.Second):
+		t.Fatal("Read blocked: part of a host transfer was lost")
+	}
+	return wire.Message{}
+}
+
+func TestFFSTransportReadsEachHostTransferWithOneRead(t *testing.T) {
 	dev, host := seqpacket(t)
 	defer unix.Close(host)
-	tr := newTransport(dev, dev, devNull(t), ffsChunk, ffsChunk, true)
+	tr := newFFSTransport(dev, dev, devNull(t))
 	defer tr.Close()
-	payload := bytes.Repeat([]byte{0xab}, 2*ffsChunk)
+	payload := make([]byte, 3*chunk+100)
+	for i := range payload {
+		payload[i] = byte(i * 7)
+	}
 	raw := encode(t, wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload})
 	sendRecord(t, host, raw[:headerLen])
-	sendRecord(t, host, raw[headerLen:headerLen+ffsChunk])
-	sendRecord(t, host, raw[headerLen+ffsChunk:])
+	sendRecord(t, host, raw[headerLen:])
 	sendRecord(t, host, nil)
 	sendRecord(t, host, encode(t, wire.Message{Command: wire.OKAY, Arg0: 3, Arg1: 4}))
-	m, err := tr.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := readWithin(t, tr)
 	if m.Command != wire.WRTE || !bytes.Equal(m.Data, payload) {
 		t.Fatalf("first message %x len %d", m.Command, len(m.Data))
 	}
-	m, err = tr.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
+	m = readWithin(t, tr)
 	if m.Command != wire.OKAY || m.Arg0 != 3 || m.Arg1 != 4 {
 		t.Fatalf("second message %+v", m)
 	}
 }
 
-func TestTransportWritesHeaderAndPayloadAsSeparateTransfers(t *testing.T) {
+func TestFFSTransportReadsPayloadSplitAcrossTransfers(t *testing.T) {
 	dev, host := seqpacket(t)
 	defer unix.Close(host)
-	tr := newTransport(dev, dev, devNull(t), ffsChunk, ffsChunk, true)
+	tr := newFFSTransport(dev, dev, devNull(t))
 	defer tr.Close()
-	payload := bytes.Repeat([]byte{7}, ffsChunk+100)
+	payload := bytes.Repeat([]byte{0xab}, 2*chunk)
+	raw := encode(t, wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload})
+	sendRecord(t, host, raw[:headerLen])
+	sendRecord(t, host, raw[headerLen:headerLen+chunk])
+	sendRecord(t, host, raw[headerLen+chunk:])
+	sendRecord(t, host, nil)
+	sendRecord(t, host, encode(t, wire.Message{Command: wire.OKAY, Arg0: 3, Arg1: 4}))
+	m := readWithin(t, tr)
+	if m.Command != wire.WRTE || !bytes.Equal(m.Data, payload) {
+		t.Fatalf("first message %x len %d", m.Command, len(m.Data))
+	}
+	m = readWithin(t, tr)
+	if m.Command != wire.OKAY || m.Arg0 != 3 || m.Arg1 != 4 {
+		t.Fatalf("second message %+v", m)
+	}
+}
+
+func TestFFSTransportWritesHeaderAndPayloadAsOneTransferEach(t *testing.T) {
+	dev, host := seqpacket(t)
+	defer unix.Close(host)
+	tr := newFFSTransport(dev, dev, devNull(t))
+	defer tr.Close()
+	payload := bytes.Repeat([]byte{7}, 3*chunk+100)
 	go tr.Write(wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload})
-	buf := make([]byte, 4*ffsChunk)
+	buf := make([]byte, 8*chunk)
 	var sizes []int
-	for _, want := range []int{headerLen, ffsChunk, 100} {
+	for _, want := range []int{headerLen, len(payload)} {
 		n, err := unix.Read(host, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sizes = append(sizes, n)
 		if n != want {
-			t.Fatalf("record sizes %v, want 24, %d, 100", sizes, ffsChunk)
+			t.Fatalf("record sizes %v, want %d, %d", sizes, headerLen, len(payload))
 		}
 	}
 }
@@ -109,7 +152,7 @@ func TestCloseUnblocksPendingReadAndFinishes(t *testing.T) {
 				wfd = rfd
 			}
 			defer unix.Close(peer)
-			tr := newTransport(rfd, wfd, devNull(t), androidChunk, androidChunk, kind == "pipe")
+			tr := newTransport(rfd, wfd, devNull(t), androidChunk, androidChunk)
 			errc := make(chan error, 1)
 			go func() {
 				_, err := tr.Read()

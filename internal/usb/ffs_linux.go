@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"ewdb/internal/session"
+	"ewdb/internal/wire"
 )
 
 const (
@@ -28,7 +29,6 @@ const (
 	eventSize = 12
 	usbDirIn  = 0x80
 
-	ffsChunk        = 16384
 	settleDelay     = 250 * time.Millisecond
 	disconnectHold  = 300 * time.Millisecond
 	minSettle       = 50 * time.Millisecond
@@ -296,9 +296,13 @@ func (e *ffsEndpoint) openTransport(gen uint64) (*transport, error) {
 		unix.Close(out)
 		return nil, fmt.Errorf("open ep2: %w", err)
 	}
-	t := newTransport(out, in, e.devnull, ffsChunk, ffsChunk, true)
+	t := newFFSTransport(out, in, e.devnull)
 	t.gen = gen
 	return t, nil
+}
+
+func newFFSTransport(out, in, devnull int) *transport {
+	return newTransport(out, in, devnull, wire.MaxPayload, wire.MaxPayload)
 }
 
 func (e *ffsEndpoint) softReconnect(ctx context.Context) bool {

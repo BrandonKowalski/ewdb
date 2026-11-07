@@ -62,7 +62,7 @@ func (e *androidEndpoint) Next(ctx context.Context) (session.Transport, error) {
 			return nil, err
 		}
 	}
-	t := newTransport(e.fd, e.fd, e.devnull, androidChunk, androidChunk, false)
+	t := newTransport(e.fd, e.fd, e.devnull, androidChunk, androidChunk)
 	e.fd = -1
 	e.cur = t
 	return t, nil

@@ -81,11 +81,7 @@ type transport struct {
 	devnull    int
 	writeChunk int
 	readChunk  int
-	buffered   bool
 	gen        uint64
-
-	buf        []byte
-	start, end int
 	zeros      int
 
 	wmu      sync.Mutex
@@ -98,18 +94,14 @@ type transport struct {
 	done   chan struct{}
 }
 
-func newTransport(rfd, wfd, devnull, readChunk, writeChunk int, buffered bool) *transport {
-	t := &transport{
+func newTransport(rfd, wfd, devnull, readChunk, writeChunk int) *transport {
+	return &transport{
 		rfd: rfd, wfd: wfd, devnull: devnull,
-		readChunk: readChunk, writeChunk: writeChunk, buffered: buffered,
+		readChunk: readChunk, writeChunk: writeChunk,
 		checksum: true,
 		tids:     map[int]struct{}{},
 		done:     make(chan struct{}),
 	}
-	if buffered {
-		t.buf = make([]byte, readChunk)
-	}
-	return t
 }
 
 func (t *transport) io(fd int, p []byte, write bool) (int, error) {
@@ -160,39 +152,20 @@ type fdReader struct{ t *transport }
 
 func (r fdReader) Read(p []byte) (int, error) {
 	t := r.t
-	if !t.buffered {
-		if len(p) > t.readChunk {
-			p = p[:t.readChunk]
-		}
-		n, err := t.io(t.rfd, p, false)
-		if err != nil {
-			return 0, err
-		}
-		if n == 0 {
-			if t.zeros++; t.zeros > maxZeroReads {
-				return 0, io.ErrNoProgress
-			}
-			return 0, nil
-		}
-		t.zeros = 0
-		return n, nil
+	if len(p) > t.readChunk {
+		p = p[:t.readChunk]
 	}
-	for t.start == t.end {
-		n, err := t.io(t.rfd, t.buf, false)
-		if err != nil {
-			return 0, err
-		}
-		if n == 0 {
-			if t.zeros++; t.zeros > maxZeroReads {
-				return 0, io.ErrNoProgress
-			}
-			continue
-		}
-		t.zeros = 0
-		t.start, t.end = 0, n
+	n, err := t.io(t.rfd, p, false)
+	if err != nil {
+		return 0, err
 	}
-	n := copy(p, t.buf[t.start:t.end])
-	t.start += n
+	if n == 0 {
+		if t.zeros++; t.zeros > maxZeroReads {
+			return 0, io.ErrNoProgress
+		}
+		return 0, nil
+	}
+	t.zeros = 0
 	return n, nil
 }
 

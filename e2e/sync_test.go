@@ -47,6 +47,31 @@ func TestPushPullRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPushPullLargeFile(t *testing.T) {
+	serial := startDaemon(t, "")
+	dir := t.TempDir()
+	src := filepath.Join(dir, "large.bin")
+	data := make([]byte, 64<<20)
+	rand.Read(data)
+	if err := os.WriteFile(src, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(dir, "device", "large.bin")
+	if _, se, code := adb(t, serial, "push", src, remote); code != 0 {
+		t.Fatalf("push: %d %s", code, se)
+	}
+	if sha(t, remote) != sha(t, src) {
+		t.Fatal("device copy differs")
+	}
+	back := filepath.Join(dir, "back.bin")
+	if _, se, code := adb(t, serial, "pull", remote, back); code != 0 {
+		t.Fatalf("pull: %d %s", code, se)
+	}
+	if sha(t, back) != sha(t, src) {
+		t.Fatal("pulled copy differs")
+	}
+}
+
 func TestPushPullOddNames(t *testing.T) {
 	serial := startDaemon(t, "")
 	dir := t.TempDir()

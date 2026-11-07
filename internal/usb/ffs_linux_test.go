@@ -31,7 +31,7 @@ func newFakeFFS(t *testing.T) *fakeFFS {
 		f.opens = append(f.opens, gen)
 		f.hosts = append(f.hosts, host)
 		f.mu.Unlock()
-		tr := newTransport(dev, dev, f.e.devnull, ffsChunk, ffsChunk, true)
+		tr := newFFSTransport(dev, dev, f.e.devnull)
 		tr.gen = gen
 		return tr, nil
 	}
@@ -149,7 +149,7 @@ func TestFFSSuspendResumeChangesNothing(t *testing.T) {
 	f.mu.Lock()
 	host := f.hosts[0]
 	f.mu.Unlock()
-	buf := make([]byte, ffsChunk)
+	buf := make([]byte, chunk)
 	if n, err := unix.Read(host, buf); err != nil || n != headerLen {
 		t.Fatalf("host read %d, %v", n, err)
 	}

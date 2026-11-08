@@ -265,12 +265,19 @@ func (t *transport) watch(stall time.Duration, paused func() bool) {
 	}()
 }
 
-func (t *transport) expectHello(wait time.Duration) {
-	time.AfterFunc(wait, func() {
-		if !t.spoke.Load() {
-			t.fail(errNoHello)
+func (t *transport) expectHello(wait time.Duration, paused func() bool) {
+	var check func()
+	check = func() {
+		if t.spoke.Load() || t.isClosed() {
+			return
 		}
-	})
+		if paused != nil && paused() {
+			time.AfterFunc(wait, check)
+			return
+		}
+		t.fail(errNoHello)
+	}
+	time.AfterFunc(wait, check)
 }
 
 func (t *transport) SetChecksum(on bool) {

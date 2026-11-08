@@ -41,6 +41,7 @@ const (
 	maxBackoff      = 5 * time.Second
 	writeStall      = 10 * time.Second
 	helloWait       = 3 * time.Second
+	firstHelloWait  = 5 * time.Second
 
 	procMounts = "/proc/mounts"
 	udcClass   = "/sys/class/udc"
@@ -65,10 +66,13 @@ type ffsEndpoint struct {
 	changed chan struct{}
 	cur     *transport
 
-	last *transport
+	last    *transport
+	heard   bool
+	rescued bool
 
-	suspended atomic.Bool
-	helloWait time.Duration
+	suspended      atomic.Bool
+	helloWait      time.Duration
+	firstHelloWait time.Duration
 }
 
 func openFFS(dir string) (*ffsEndpoint, error) {
@@ -93,7 +97,7 @@ func openFFS(dir string) (*ffsEndpoint, error) {
 }
 
 func newFFSEndpoint(dir string, ep0, devnull int) *ffsEndpoint {
-	e := &ffsEndpoint{dir: dir, ep0: ep0, devnull: devnull, changed: make(chan struct{}), helloWait: helloWait}
+	e := &ffsEndpoint{dir: dir, ep0: ep0, devnull: devnull, changed: make(chan struct{}), helloWait: helloWait, firstHelloWait: firstHelloWait}
 	e.open = e.openTransport
 	e.reconnect = e.softReconnect
 	return e
@@ -226,6 +230,10 @@ func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
 			return nil, err
 		}
 		prevGen, hadPrev, prevSpoke = p.gen, true, p.spoke.Load()
+		e.heard = e.heard || prevSpoke
+		if !e.heard && p.closedErr() == errNoHello {
+			e.rescued = true
+		}
 	}
 	settle := time.Now().Add(settleDelay)
 	reconnected := false
@@ -243,8 +251,12 @@ func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
 				if err == nil {
 					if e.register(t) {
 						t.watch(writeStall, e.paused)
-						if hadPrev && prevSpoke && !reconnected {
-							t.expectHello(e.helloWait)
+						switch {
+						case reconnected:
+						case hadPrev && prevSpoke:
+							t.expectHello(e.helloWait, nil)
+						case !e.heard && !e.rescued:
+							t.expectHello(e.firstHelloWait, e.paused)
 						}
 						return t, nil
 					}

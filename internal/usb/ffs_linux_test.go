@@ -275,13 +275,98 @@ func TestFFSSilentHostAfterResetReconnectsOnce(t *testing.T) {
 	}
 }
 
-func TestFFSFirstTransportWaitsForHost(t *testing.T) {
+func TestFFSFirstTransportSilentHostReconnectsOncePerRun(t *testing.T) {
 	f := newFakeFFS(t)
-	f.e.helloWait = 100 * time.Millisecond
+	f.e.firstHelloWait = 100 * time.Millisecond
+	f.onReconn = func() {
+		f.send(evDisable)
+		f.send(evEnable)
+	}
+	f.send(evBind)
 	f.send(evEnable)
 	t1 := f.next(context.Background())
-	if waitClosed(t1, 4*f.e.helloWait) {
-		t.Fatal("first transport gave up on the host")
+	if !waitClosed(t1, 2*time.Second) {
+		t.Fatal("first transport kept waiting for a configured host that never spoke")
+	}
+	if _, err := t1.Read(); err != errNoHello {
+		t.Fatalf("Read = %v, want %v", err, errNoHello)
+	}
+	t2 := f.next(context.Background())
+	if reconnects, _ := f.counts(); reconnects != 1 || t2.gen != 2 {
+		t.Fatalf("after silence: reconnects %d, gen %d", reconnects, t2.gen)
+	}
+	if waitClosed(t2, 4*f.e.firstHelloWait) {
+		t.Fatal("transport after the reconnect gave up on the host too")
+	}
+	f.send(evDisable)
+	f.send(evEnable)
+	t3 := f.next(context.Background())
+	if waitClosed(t3, 4*f.e.firstHelloWait) {
+		t.Fatal("silent host was cycled a second time in one run")
+	}
+	if reconnects, _ := f.counts(); reconnects != 1 {
+		t.Fatalf("reconnects %d, want 1", reconnects)
+	}
+}
+
+func TestFFSFirstTransportKeepsHostThatSpoke(t *testing.T) {
+	f := newFakeFFS(t)
+	f.e.firstHelloWait = 100 * time.Millisecond
+	f.send(evEnable)
+	t1 := f.next(context.Background())
+	sendRecord(t, f.host(0), encode(t, wire.Message{Command: wire.CNXN, Arg0: wire.Version, Arg1: wire.MaxPayload}))
+	readWithin(t, t1)
+	if waitClosed(t1, 4*f.e.firstHelloWait) {
+		t.Fatal("first transport gave up on a host that spoke")
+	}
+}
+
+func TestFFSFirstTransportWaitsWhileSuspended(t *testing.T) {
+	f := newFakeFFS(t)
+	f.e.firstHelloWait = 100 * time.Millisecond
+	f.send(evEnable)
+	t1 := f.next(context.Background())
+	f.send(evSuspend)
+	if waitClosed(t1, 4*f.e.firstHelloWait) {
+		t.Fatal("first transport cycled a host that suspended the bus")
+	}
+	if reconnects, _ := f.counts(); reconnects != 0 {
+		t.Fatalf("reconnects %d, want 0", reconnects)
+	}
+}
+
+func TestFFSFirstTransportAfterHostResetStillGetsRescue(t *testing.T) {
+	f := newFakeFFS(t)
+	f.e.firstHelloWait = 100 * time.Millisecond
+	f.send(evEnable)
+	t1 := f.next(context.Background())
+	f.send(evDisable)
+	f.send(evEnable)
+	t2 := f.next(context.Background())
+	if t1 == t2 || t2.gen != 2 {
+		t.Fatalf("gen %d", t2.gen)
+	}
+	if !waitClosed(t2, 2*time.Second) {
+		t.Fatal("transport after an enumeration reset kept waiting for a silent host")
+	}
+}
+
+func TestFFSHostThatSpokeEarlierDisablesFirstRescue(t *testing.T) {
+	f := newFakeFFS(t)
+	f.e.firstHelloWait = 100 * time.Millisecond
+	f.e.helloWait = time.Hour
+	f.send(evEnable)
+	t1 := f.next(context.Background())
+	sendRecord(t, f.host(0), encode(t, wire.Message{Command: wire.CNXN, Arg0: wire.Version, Arg1: wire.MaxPayload}))
+	readWithin(t, t1)
+	f.send(evDisable)
+	f.send(evEnable)
+	f.next(context.Background())
+	f.send(evDisable)
+	f.send(evEnable)
+	t3 := f.next(context.Background())
+	if waitClosed(t3, 4*f.e.firstHelloWait) {
+		t.Fatal("first-transport rescue applied after a host had spoken in this run")
 	}
 }
 

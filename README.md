@@ -1,6 +1,6 @@
-# ewdb
+# e-waste debug bridge (ewdb)
 
-ewdb, the e-waste debug bridge, replaces the device side of adb (`adbd`) on Linux retro handhelds. The host keeps the
+ewdb replaces the device side of adb (`adbd`) on Linux retro handhelds. The host keeps the
 stock `adb` from Android platform-tools, unmodified, and it behaves the way it does with a phone.
 
 ## Why

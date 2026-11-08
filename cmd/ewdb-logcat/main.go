@@ -157,6 +157,12 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			logPath = kv.Value
 		}
 	}
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		if k, err := openKmsg(); err == nil {
+			fmt.Fprintf(stderr, "ewdb-logcat: no syslog at %s, showing the kernel log\n", logPath)
+			return runKmsg(ctx, k, opt, stdout, stderr)
+		}
+	}
 	file, err := os.Open(logPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "ewdb-logcat: no log at %s\n", logPath)

@@ -153,6 +153,7 @@ func TestFollowSurvivesReplace(t *testing.T) {
 
 func TestMissingFile(t *testing.T) {
 	log := setup(t, "")
+	useKmsg(t, "")
 	out, errOut, code := runDump("-d")
 	if code != 1 || out != "" || errOut != "ewdb-logcat: no log at "+log+"\n" {
 		t.Fatalf("code %d out %q err %q", code, out, errOut)

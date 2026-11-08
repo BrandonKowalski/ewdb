@@ -159,7 +159,9 @@ something else.
   messages, boot script output and frontend output (today `launch_frontend.sh`
   output goes to `/dev/null`). Supports `-d` (dump and exit), following by default,
   `-c` (clear), and simple tag or priority filtering where the source carries it.
-  Android's `-v` formats and `-b` buffers are not required.
+  Android's `-v` formats and `-b` buffers are not required. Where the configured
+  file does not exist (no syslog daemon), `ewdb-logcat` reads the kernel log from
+  `/dev/kmsg` instead, says so on stderr, and leaves it alone on `-c`.
 - `bugreport`: `bugreportz` with Android's progress and `OK:<path>` protocol, so
   plain `adb bugreport` produces a zip. Contents: OS version, kernel version and
   command line, `dmesg`, the log, `ps`, mounts, `df`, input devices, DRM

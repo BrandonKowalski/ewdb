@@ -98,7 +98,7 @@ func TestOffScreenIsReportedAndSkipped(t *testing.T) {
 func TestNothingLitFallsBackToFramebuffer(t *testing.T) {
 	src := &fakeSource{conns: []connector{{"DSI-1", false}}}
 	code, out, errs := exec(t, fakeBackend(src), "--screens", "top=DSI-1")
-	if code != 0 || errs != "screencap: the top screen is off\n" {
+	if code != 0 || errs != "" {
 		t.Fatalf("code %d err %q", code, errs)
 	}
 	if w, h := dims(t, out); w != 1 || h != 1 {
@@ -121,12 +121,43 @@ func TestSelectedOffWhileOtherLitExitsOne(t *testing.T) {
 }
 
 func TestNoCardFallsBackToFramebuffer(t *testing.T) {
-	code, out, _ := exec(t, fakeBackend(nil))
-	if code != 0 {
-		t.Fatalf("code %d", code)
+	code, out, errs := exec(t, fakeBackend(nil))
+	if code != 0 || errs != "" {
+		t.Fatalf("code %d err %q", code, errs)
 	}
 	if w, h := dims(t, out); w != 1 || h != 1 {
 		t.Fatalf("%dx%d", w, h)
+	}
+}
+
+func TestNoCardPNGOnStdoutIsClean(t *testing.T) {
+	var out bytes.Buffer
+	code := run([]string{"-p"}, &out, &out, fakeBackend(nil))
+	if code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if _, err := png.Decode(bytes.NewReader(out.Bytes())); err != nil {
+		t.Fatalf("merged output is not a PNG: %v: %q", err, out.Bytes()[:min(40, out.Len())])
+	}
+}
+
+func TestDRMFailuresReportedWhenFramebufferFailsToo(t *testing.T) {
+	src := &fakeSource{conns: []connector{{"DSI-1", false}}}
+	be := fakeBackend(src)
+	be.grabFB = func() (capture.Image, error) { return capture.Image{}, errors.New("open /dev/fb0: no such file") }
+	code, out, errs := exec(t, be, "--screens", "top=DSI-1")
+	if code != 1 || len(out) != 0 || errs != "screencap: the top screen is off\nscreencap: open /dev/fb0: no such file\n" {
+		t.Fatalf("code %d out %d err %q", code, len(out), errs)
+	}
+	code, _, errs = exec(t, fakeBackend(nil))
+	if code != 0 || errs != "" {
+		t.Fatalf("code %d err %q", code, errs)
+	}
+	be = fakeBackend(nil)
+	be.grabFB = func() (capture.Image, error) { return capture.Image{}, errors.New("open /dev/fb0: no such file") }
+	code, _, errs = exec(t, be)
+	if code != 1 || errs != "screencap: drm: no DRM card\nscreencap: open /dev/fb0: no such file\n" {
+		t.Fatalf("code %d err %q", code, errs)
 	}
 }
 

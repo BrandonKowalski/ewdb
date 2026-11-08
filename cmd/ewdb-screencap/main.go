@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -99,25 +100,30 @@ func run(args []string, stdout, stderr io.Writer, be backend) int {
 	}
 
 	var imgs []capture.Image
+	var drmLog bytes.Buffer
 	src, err := be.openDRM()
 	drmTried := err == nil
 	if err != nil {
-		fmt.Fprintf(stderr, "screencap: drm: %v\n", err)
+		fmt.Fprintf(&drmLog, "screencap: drm: %v\n", err)
 	}
 	if drmTried {
-		code, got, lit := captureDRM(src, named, want, stderr)
+		code, got, lit := captureDRM(src, named, want, &drmLog)
 		src.Close()
 		if code != 0 {
+			stderr.Write(drmLog.Bytes())
 			return code
 		}
 		imgs = got
 		if lit == 0 {
 			drmTried = false
+		} else {
+			stderr.Write(drmLog.Bytes())
 		}
 	}
 	if !drmTried {
 		img, err := be.grabFB()
 		if err != nil {
+			stderr.Write(drmLog.Bytes())
 			fmt.Fprintf(stderr, "screencap: %v\n", err)
 			return 1
 		}

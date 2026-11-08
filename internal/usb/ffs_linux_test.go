@@ -228,3 +228,80 @@ func TestSoftConnectStopsWhenUDCUnboundAndReportsFailure(t *testing.T) {
 		t.Fatalf("connect attempts %d, want 1", connects)
 	}
 }
+
+func (f *fakeFFS) host(i int) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hosts[i]
+}
+
+func waitClosed(tr *transport, d time.Duration) bool {
+	select {
+	case <-tr.done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+func TestFFSSilentHostAfterResetReconnectsOnce(t *testing.T) {
+	f := newFakeFFS(t)
+	f.e.helloWait = 200 * time.Millisecond
+	f.onReconn = func() {
+		f.send(evDisable)
+		f.send(evEnable)
+	}
+	f.send(evEnable)
+	t1 := f.next(context.Background())
+	sendRecord(t, f.host(0), encode(t, wire.Message{Command: wire.CNXN, Arg0: wire.Version, Arg1: wire.MaxPayload}))
+	readWithin(t, t1)
+	f.send(evEnable)
+	t2 := f.next(context.Background())
+	if reconnects, _ := f.counts(); reconnects != 0 || t2.gen != 2 {
+		t.Fatalf("after reset: reconnects %d, gen %d", reconnects, t2.gen)
+	}
+	if !waitClosed(t2, 2*time.Second) {
+		t.Fatal("transport kept waiting for a host that never spoke")
+	}
+	if _, err := t2.Read(); err != errNoHello {
+		t.Fatalf("Read = %v, want %v", err, errNoHello)
+	}
+	t3 := f.next(context.Background())
+	if reconnects, _ := f.counts(); reconnects != 1 || t3.gen != 3 {
+		t.Fatalf("after silence: reconnects %d, gen %d", reconnects, t3.gen)
+	}
+	if waitClosed(t3, 4*f.e.helloWait) {
+		t.Fatal("transport after a reconnect gave up on the host too")
+	}
+}
+
+func TestFFSFirstTransportWaitsForHost(t *testing.T) {
+	f := newFakeFFS(t)
+	f.e.helloWait = 100 * time.Millisecond
+	f.send(evEnable)
+	t1 := f.next(context.Background())
+	if waitClosed(t1, 4*f.e.helloWait) {
+		t.Fatal("first transport gave up on the host")
+	}
+}
+
+func TestFFSSuspendPausesStallWatchdog(t *testing.T) {
+	f := newFakeFFS(t)
+	f.send(evEnable)
+	if f.e.paused() {
+		t.Fatal("paused before SUSPEND")
+	}
+	f.send(evSuspend)
+	if !f.e.paused() {
+		t.Fatal("not paused after SUSPEND")
+	}
+	f.send(evResume)
+	if f.e.paused() {
+		t.Fatal("paused after RESUME")
+	}
+	f.send(evSuspend)
+	f.send(evDisable)
+	if f.e.paused() {
+		t.Fatal("paused after DISABLE")
+	}
+}

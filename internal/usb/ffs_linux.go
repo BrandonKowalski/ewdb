@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -38,6 +39,8 @@ const (
 	connectRetry    = 500 * time.Millisecond
 	minBackoff      = 100 * time.Millisecond
 	maxBackoff      = 5 * time.Second
+	writeStall      = 10 * time.Second
+	helloWait       = 3 * time.Second
 
 	procMounts = "/proc/mounts"
 	udcClass   = "/sys/class/udc"
@@ -63,6 +66,9 @@ type ffsEndpoint struct {
 	cur     *transport
 
 	last *transport
+
+	suspended atomic.Bool
+	helloWait time.Duration
 }
 
 func openFFS(dir string) (*ffsEndpoint, error) {
@@ -87,11 +93,13 @@ func openFFS(dir string) (*ffsEndpoint, error) {
 }
 
 func newFFSEndpoint(dir string, ep0, devnull int) *ffsEndpoint {
-	e := &ffsEndpoint{dir: dir, ep0: ep0, devnull: devnull, changed: make(chan struct{})}
+	e := &ffsEndpoint{dir: dir, ep0: ep0, devnull: devnull, changed: make(chan struct{}), helloWait: helloWait}
 	e.open = e.openTransport
 	e.reconnect = e.softReconnect
 	return e
 }
+
+func (e *ffsEndpoint) paused() bool { return e.suspended.Load() }
 
 func writeDescriptors(ep0 int) error {
 	if _, err := writeRetry(ep0, DescriptorsV2()); err != nil {
@@ -146,6 +154,9 @@ func (e *ffsEndpoint) event(ev []byte) {
 		log.Printf("usb: unknown event %d", typ)
 	} else if typ != evSetup {
 		log.Printf("usb: %s", name)
+	}
+	if typ != evSetup {
+		e.suspended.Store(typ == evSuspend)
 	}
 	switch typ {
 	case evEnable:
@@ -208,13 +219,13 @@ func (e *ffsEndpoint) state() ffsState {
 
 func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
 	var prevGen uint64
-	hadPrev := false
+	hadPrev, prevSpoke := false, false
 	if p := e.last; p != nil {
 		p.Close()
 		if err := waitDone(ctx, p.done); err != nil {
 			return nil, err
 		}
-		prevGen, hadPrev = p.gen, true
+		prevGen, hadPrev, prevSpoke = p.gen, true, p.spoke.Load()
 	}
 	settle := time.Now().Add(settleDelay)
 	reconnected := false
@@ -231,6 +242,10 @@ func (e *ffsEndpoint) Next(ctx context.Context) (session.Transport, error) {
 				t, err := e.open(s.gen)
 				if err == nil {
 					if e.register(t) {
+						t.watch(writeStall, e.paused)
+						if hadPrev && prevSpoke && !reconnected {
+							t.expectHello(e.helloWait)
+						}
 						return t, nil
 					}
 					t.Close()

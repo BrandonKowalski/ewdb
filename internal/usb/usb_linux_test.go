@@ -3,6 +3,7 @@ package usb
 import (
 	"bytes"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,5 +185,91 @@ func TestCloseUnblocksPendingReadAndFinishes(t *testing.T) {
 				t.Fatalf("Write on closed transport = %v", err)
 			}
 		})
+	}
+}
+
+func writeUntilError(tr *transport) chan error {
+	errc := make(chan error, 1)
+	go func() {
+		payload := bytes.Repeat([]byte{1}, wire.MaxPayload)
+		for {
+			if err := tr.Write(wire.Message{Command: wire.WRTE, Arg0: 1, Arg1: 2, Data: payload}); err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+	return errc
+}
+
+func TestWriteStallFailsTransport(t *testing.T) {
+	dev, host := seqpacket(t)
+	defer unix.Close(host)
+	tr := newFFSTransport(dev, dev, devNull(t))
+	defer tr.Close()
+	tr.watch(200*time.Millisecond, func() bool { return false })
+	errc := writeUntilError(tr)
+	select {
+	case err := <-errc:
+		if err != errHostStalled {
+			t.Fatalf("Write = %v, want %v", err, errHostStalled)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stalled write never failed")
+	}
+	if _, err := tr.Read(); err != errHostStalled {
+		t.Fatalf("Read after stall = %v", err)
+	}
+}
+
+func TestWriteStallWaitsWhilePaused(t *testing.T) {
+	dev, host := seqpacket(t)
+	defer unix.Close(host)
+	tr := newFFSTransport(dev, dev, devNull(t))
+	defer tr.Close()
+	var mu sync.Mutex
+	paused := true
+	tr.watch(100*time.Millisecond, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return paused
+	})
+	errc := writeUntilError(tr)
+	select {
+	case err := <-errc:
+		t.Fatalf("Write failed while paused: %v", err)
+	case <-time.After(600 * time.Millisecond):
+	}
+	mu.Lock()
+	paused = false
+	mu.Unlock()
+	select {
+	case err := <-errc:
+		if err != errHostStalled {
+			t.Fatalf("Write = %v, want %v", err, errHostStalled)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stalled write never failed after resume")
+	}
+}
+
+func TestWritesThatCompleteDoNotStall(t *testing.T) {
+	dev, host := seqpacket(t)
+	defer unix.Close(host)
+	tr := newFFSTransport(dev, dev, devNull(t))
+	defer tr.Close()
+	tr.watch(100*time.Millisecond, func() bool { return false })
+	buf := make([]byte, 2*chunk)
+	for range 5 {
+		if err := tr.Write(wire.Message{Command: wire.OKAY, Arg0: 1, Arg1: 2}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := unix.Read(host, buf); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+	if tr.isClosed() {
+		t.Fatal("idle transport closed by the stall watchdog")
 	}
 }

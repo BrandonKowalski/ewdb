@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -21,7 +22,11 @@ const (
 	reapInterval = 20 * time.Millisecond
 )
 
-var errClosed = errors.New("usb: transport closed")
+var (
+	errClosed      = errors.New("usb: transport closed")
+	errHostStalled = errors.New("usb: host stopped reading")
+	errNoHello     = errors.New("usb: host did not connect")
+)
 
 func openTarget(t target) (Endpoint, error) {
 	switch t.kind {
@@ -87,8 +92,12 @@ type transport struct {
 	wmu      sync.Mutex
 	checksum bool
 
+	writeSince atomic.Int64
+	spoke      atomic.Bool
+
 	mu     sync.Mutex
 	closed bool
+	cause  error
 	tids   map[int]struct{}
 	once   sync.Once
 	done   chan struct{}
@@ -115,7 +124,7 @@ func (t *transport) io(fd int, p []byte, write bool) (int, error) {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
-		return 0, errClosed
+		return 0, t.closedErr()
 	}
 	t.tids[tid] = struct{}{}
 	t.mu.Unlock()
@@ -133,13 +142,31 @@ func (t *transport) io(fd int, p []byte, write bool) (int, error) {
 			n, err = unix.Read(fd, p)
 		}
 		if t.isClosed() {
-			return 0, errClosed
+			return 0, t.closedErr()
 		}
 		if err == unix.EINTR {
 			continue
 		}
 		return n, err
 	}
+}
+
+func (t *transport) closedErr() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cause != nil {
+		return t.cause
+	}
+	return errClosed
+}
+
+func (t *transport) fail(err error) {
+	t.mu.Lock()
+	if !t.closed && t.cause == nil {
+		t.cause = err
+	}
+	t.mu.Unlock()
+	t.Close()
 }
 
 func (t *transport) isClosed() bool {
@@ -166,6 +193,7 @@ func (r fdReader) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 	t.zeros = 0
+	t.spoke.Store(true)
 	return n, nil
 }
 
@@ -195,6 +223,8 @@ func (t *transport) Write(m wire.Message) error {
 }
 
 func (t *transport) writeAll(p []byte) error {
+	t.writeSince.Store(time.Now().UnixNano())
+	defer t.writeSince.Store(0)
 	for len(p) > 0 {
 		n, err := t.io(t.wfd, p, true)
 		if err != nil {
@@ -206,6 +236,41 @@ func (t *transport) writeAll(p []byte) error {
 		p = p[n:]
 	}
 	return nil
+}
+
+func (t *transport) watch(stall time.Duration, paused func() bool) {
+	go func() {
+		tick := time.NewTicker(stall / 4)
+		defer tick.Stop()
+		for {
+			select {
+			case <-t.done:
+				return
+			case <-tick.C:
+			}
+			since := t.writeSince.Load()
+			if since == 0 {
+				continue
+			}
+			now := time.Now()
+			if paused() {
+				t.writeSince.CompareAndSwap(since, now.UnixNano())
+				continue
+			}
+			if now.Sub(time.Unix(0, since)) >= stall {
+				t.fail(errHostStalled)
+				return
+			}
+		}
+	}()
+}
+
+func (t *transport) expectHello(wait time.Duration) {
+	time.AfterFunc(wait, func() {
+		if !t.spoke.Load() {
+			t.fail(errNoHello)
+		}
+	})
 }
 
 func (t *transport) SetChecksum(on bool) {

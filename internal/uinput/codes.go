@@ -26,6 +26,18 @@ const (
 
 	ABS_X              = 0x00
 	ABS_Y              = 0x01
+	ABS_Z              = 0x02
+	ABS_RX             = 0x03
+	ABS_RY             = 0x04
+	ABS_RZ             = 0x05
+	ABS_HAT0X          = 0x10
+	ABS_HAT0Y          = 0x11
+	ABS_HAT1X          = 0x12
+	ABS_HAT1Y          = 0x13
+	ABS_HAT2X          = 0x14
+	ABS_HAT2Y          = 0x15
+	ABS_HAT3X          = 0x16
+	ABS_HAT3Y          = 0x17
 	ABS_MT_SLOT        = 0x2f
 	ABS_MT_POSITION_X  = 0x35
 	ABS_MT_POSITION_Y  = 0x36
@@ -154,4 +166,10 @@ var CodeNames = map[string]uint16{
 	"BTN_A": BTN_A, "BTN_B": BTN_B, "BTN_X": BTN_X, "BTN_Y": BTN_Y,
 	"BTN_DPAD_UP": BTN_DPAD_UP, "BTN_DPAD_DOWN": BTN_DPAD_DOWN,
 	"BTN_DPAD_LEFT": BTN_DPAD_LEFT, "BTN_DPAD_RIGHT": BTN_DPAD_RIGHT,
+}
+
+var AbsNames = map[string]uint16{
+	"ABS_X": ABS_X, "ABS_Y": ABS_Y, "ABS_Z": ABS_Z, "ABS_RX": ABS_RX, "ABS_RY": ABS_RY, "ABS_RZ": ABS_RZ,
+	"ABS_HAT0X": ABS_HAT0X, "ABS_HAT0Y": ABS_HAT0Y, "ABS_HAT1X": ABS_HAT1X, "ABS_HAT1Y": ABS_HAT1Y,
+	"ABS_HAT2X": ABS_HAT2X, "ABS_HAT2Y": ABS_HAT2Y, "ABS_HAT3X": ABS_HAT3X, "ABS_HAT3Y": ABS_HAT3Y,
 }

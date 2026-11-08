@@ -90,7 +90,7 @@ func panel(name string, withABS bool) *fakeDev {
 func newInjector(devs table) *injector {
 	return &injector{
 		devs:  devs,
-		keys:  map[string]KeyTarget{"DPAD_UP": {"pad", uinput.BTN_DPAD_UP}, "HOME": {"pad", uinput.KEY_HOME}},
+		keys:  map[string]KeyTarget{"DPAD_UP": {Device: "pad", Code: uinput.BTN_DPAD_UP}, "HOME": {Device: "pad", Code: uinput.KEY_HOME}},
 		touch: "ts",
 		sleep: func(time.Duration) {},
 	}
@@ -147,6 +147,37 @@ func TestInjectKeyWrites(t *testing.T) {
 	}
 }
 
+func hatInjector(devs table) *injector {
+	in := newInjector(devs)
+	in.keys["DPAD_RIGHT"] = KeyTarget{Device: "keys", Code: uinput.ABS_HAT0X, Axis: true, Value: 1}
+	return in
+}
+
+func TestInjectAxisKeyWrites(t *testing.T) {
+	keys := newDev("keys", map[uint16]uinput.AbsInfo{uinput.ABS_HAT0X: {Min: -1, Max: 1}})
+	if err := hatInjector(table{"keys": keys}).run([]string{"keyevent", "DPAD_RIGHT"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []write{
+		{uinput.EV_ABS, uinput.ABS_HAT0X, 1}, {uinput.EV_SYN, 0, 0},
+		{uinput.EV_ABS, uinput.ABS_HAT0X, 0}, {uinput.EV_SYN, 0, 0},
+	}
+	if !reflect.DeepEqual(keys.writes, want) {
+		t.Fatalf("got %v", keys.writes)
+	}
+}
+
+func TestInjectAxisKeyDeviceMissingAxis(t *testing.T) {
+	keys := newDev("keys", map[uint16]uinput.AbsInfo{uinput.ABS_HAT0Y: {Min: -1, Max: 1}}, [2]uint16{uinput.EV_KEY, uinput.KEY_Q})
+	err := hatInjector(table{"keys": keys}).run([]string{"keyevent", "DPAD_RIGHT"})
+	if err == nil || err.Error() != "key DPAD_RIGHT: device keys has no ABS_HAT0X" {
+		t.Fatalf("got %v", err)
+	}
+	if len(keys.writes) != 0 {
+		t.Fatal("wrote anyway")
+	}
+}
+
 func TestInjectDeviceNotFound(t *testing.T) {
 	err := newInjector(table{}).run([]string{"keyevent", "DPAD_UP"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
@@ -179,7 +210,7 @@ func TestInjectLocksInOrder(t *testing.T) {
 	adc := newDev("adc", nil, [2]uint16{uinput.EV_KEY, uinput.KEY_BACK})
 	pad.locked, adc.locked = &log, &log
 	in := newInjector(table{"pad": pad, "adc": adc})
-	in.keys["BACK"] = KeyTarget{"adc", uinput.KEY_BACK}
+	in.keys["BACK"] = KeyTarget{Device: "adc", Code: uinput.KEY_BACK}
 	if err := in.run([]string{"keyevent", "DPAD_UP", "BACK"}); err != nil {
 		t.Fatal(err)
 	}

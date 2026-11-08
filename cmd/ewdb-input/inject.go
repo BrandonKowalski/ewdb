@@ -44,9 +44,13 @@ func touchFor(name string, t Target) (Touch, error) {
 	return out, nil
 }
 
-func codeName(code uint16) string {
+func codeName(typ, code uint16) string {
+	table := uinput.CodeNames
+	if typ == uinput.EV_ABS {
+		table = uinput.AbsNames
+	}
 	var names []string
-	for n, c := range uinput.CodeNames {
+	for n, c := range table {
 		if c == code {
 			names = append(names, n)
 		}
@@ -61,12 +65,12 @@ func codeName(code uint16) string {
 func (in *injector) keyName(e Event) string {
 	var names []string
 	for n, k := range in.keys {
-		if k.Device == e.Device && k.Code == e.Code {
+		if k.Device == e.Device && k.Code == e.Code && k.Axis == (e.Type == uinput.EV_ABS) {
 			names = append(names, n)
 		}
 	}
 	if len(names) == 0 {
-		return codeName(e.Code)
+		return codeName(e.Type, e.Code)
 	}
 	sort.Strings(names)
 	return names[0]
@@ -100,10 +104,10 @@ func (in *injector) run(args []string) error {
 	if err != nil {
 		return err
 	}
-	return in.execute(events, touch.Device, open)
+	return in.execute(events, touch.Device, cmd == "keyevent", open)
 }
 
-func (in *injector) execute(events []Event, touchDev string, open func(string) (Target, error)) error {
+func (in *injector) execute(events []Event, touchDev string, strict bool, open func(string) (Target, error)) error {
 	targets := map[string]Target{}
 	var names []string
 	for _, e := range events {
@@ -118,8 +122,9 @@ func (in *injector) execute(events []Event, touchDev string, open func(string) (
 		names = append(names, e.Device)
 	}
 	for _, e := range events {
-		if e.Type == uinput.EV_KEY && e.Code != uinput.BTN_TOUCH && !targets[e.Device].Supports(e.Type, e.Code) {
-			return fmt.Errorf("key %s: device %s has no %s", in.keyName(e), e.Device, codeName(e.Code))
+		required := strict || (e.Type == uinput.EV_KEY && e.Code != uinput.BTN_TOUCH)
+		if required && !targets[e.Device].Supports(e.Type, e.Code) {
+			return fmt.Errorf("key %s: device %s has no %s", in.keyName(e), e.Device, codeName(e.Type, e.Code))
 		}
 	}
 	sort.Strings(names)

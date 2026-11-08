@@ -177,8 +177,12 @@ something else.
   accepts Android key names and numbers for the keys a handheld has (D-pad,
   A/B/X/Y, shoulders, start, select, home, back, volume, power); the `[keys]`
   section maps each to a device name and a Linux code, and a code the device does
-  not have is an error. Concurrent invocations are serialized with an advisory
-  `flock` on the event node. Only `text` needs a persistent device:
+  not have is an error. An entry can instead name an axis and a value, as in
+  `DPAD_UP = ANBERNIC-keys ABS_HAT0Y -1`, for a D-pad that reports a hat: the key
+  press writes that value and `SYN_REPORT`, waits as for a key, then writes 0 and
+  `SYN_REPORT`; an axis the device does not have is an error too. Concurrent
+  invocations are serialized with an advisory `flock` on the event node. Only
+  `text` needs a persistent device:
   `ewdb-input --serve` owns a uinput keyboard (`ewdb keyboard`, limited to the
   keys `text` types plus shift) and runs `text` requests over a unix socket;
   without it `text` fails and the other commands are unaffected. If another

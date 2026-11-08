@@ -25,6 +25,8 @@ type Event struct {
 type KeyTarget struct {
 	Device string
 	Code   uint16
+	Axis   bool
+	Value  int32
 }
 
 type Touch struct {
@@ -140,6 +142,14 @@ func parseKeys(entries []kv) (map[string]KeyTarget, []string) {
 			warnings = append(warnings, fmt.Sprintf("[keys] %s: expected <device name> <code name>", e.Key))
 			continue
 		}
+		if strings.HasPrefix(fields[len(fields)-2], "ABS_") || strings.HasPrefix(fields[len(fields)-1], "ABS_") {
+			if t, warning := parseAxis(e.Key, fields); warning != "" {
+				warnings = append(warnings, warning)
+			} else {
+				m[name] = t
+			}
+			continue
+		}
 		code, ok := uinput.CodeNames[fields[len(fields)-1]]
 		if !ok {
 			warnings = append(warnings, fmt.Sprintf("[keys] %s: unknown code %s", e.Key, fields[len(fields)-1]))
@@ -148,6 +158,23 @@ func parseKeys(entries []kv) (map[string]KeyTarget, []string) {
 		m[name] = KeyTarget{Device: strings.Join(fields[:len(fields)-1], " "), Code: code}
 	}
 	return m, warnings
+}
+
+func parseAxis(key string, fields []string) (KeyTarget, string) {
+	usage := fmt.Sprintf("[keys] %s: expected <device name> <axis> <value>", key)
+	if len(fields) < 3 {
+		return KeyTarget{}, usage
+	}
+	axis := fields[len(fields)-2]
+	value, err := strconv.ParseInt(fields[len(fields)-1], 10, 32)
+	if err != nil || !strings.HasPrefix(axis, "ABS_") {
+		return KeyTarget{}, usage
+	}
+	code, ok := uinput.AbsNames[axis]
+	if !ok {
+		return KeyTarget{}, fmt.Sprintf("[keys] %s: unknown code %s", key, axis)
+	}
+	return KeyTarget{Device: strings.Join(fields[:len(fields)-2], " "), Code: code, Axis: true, Value: int32(value)}, ""
 }
 
 type builder struct {
@@ -288,9 +315,13 @@ func planKeyevent(args []string, keys map[string]KeyTarget) ([]Event, error) {
 		if i > 0 {
 			gap = keyGap
 		}
-		b.add(target.Device, uinput.EV_KEY, target.Code, 1, gap)
+		typ, press := uint16(uinput.EV_KEY), int32(1)
+		if target.Axis {
+			typ, press = uinput.EV_ABS, target.Value
+		}
+		b.add(target.Device, typ, target.Code, press, gap)
 		b.syn(target.Device)
-		b.add(target.Device, uinput.EV_KEY, target.Code, 0, keyGap)
+		b.add(target.Device, typ, target.Code, 0, keyGap)
 		b.syn(target.Device)
 	}
 	return b.events, nil

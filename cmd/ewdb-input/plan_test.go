@@ -15,6 +15,7 @@ var keys = map[string]KeyTarget{
 	"DPAD_UP":   {Device: "pad", Code: uinput.BTN_DPAD_UP},
 	"DPAD_DOWN": {Device: "pad", Code: uinput.BTN_DPAD_DOWN},
 	"BACK":      {Device: "adc", Code: uinput.KEY_BACK},
+	"DPAD_LEFT": {Device: "ANBERNIC-keys", Code: uinput.ABS_HAT0X, Axis: true, Value: -1},
 }
 
 func ev(dev string, typ, code uint16, value int32, delay time.Duration) Event {
@@ -274,16 +275,69 @@ func TestParseKeys(t *testing.T) {
 		{Key: "HOME", Value: "pad NO_SUCH_CODE"},
 		{Key: "MENU", Value: "KEY_MENU"},
 	})
-	if m["DPAD_UP"] != (KeyTarget{"retrogame_joypad", uinput.BTN_DPAD_UP}) {
+	if m["DPAD_UP"] != (KeyTarget{Device: "retrogame_joypad", Code: uinput.BTN_DPAD_UP}) {
 		t.Fatalf("%v", m)
 	}
-	if m["BACK"] != (KeyTarget{"adc-keys-back", uinput.KEY_BACK}) {
+	if m["BACK"] != (KeyTarget{Device: "adc-keys-back", Code: uinput.KEY_BACK}) {
 		t.Fatalf("%v", m)
 	}
-	if m["POWER"] != (KeyTarget{"rk805 pwrkey", uinput.KEY_POWER}) {
+	if m["POWER"] != (KeyTarget{Device: "rk805 pwrkey", Code: uinput.KEY_POWER}) {
 		t.Fatalf("%v", m)
 	}
 	if _, ok := m["HOME"]; ok || len(warnings) != 2 {
 		t.Fatalf("%v %v", m, warnings)
+	}
+}
+
+func TestPlanKeyeventAxis(t *testing.T) {
+	got, err := Plan([]string{"keyevent", "DPAD_LEFT", "BACK"}, keys, touch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Event{
+		ev("ANBERNIC-keys", uinput.EV_ABS, uinput.ABS_HAT0X, -1, 0),
+		syn("ANBERNIC-keys", 0),
+		ev("ANBERNIC-keys", uinput.EV_ABS, uinput.ABS_HAT0X, 0, 40*time.Millisecond),
+		syn("ANBERNIC-keys", 0),
+		ev("adc", uinput.EV_KEY, uinput.KEY_BACK, 1, 40*time.Millisecond),
+		syn("adc", 0),
+		ev("adc", uinput.EV_KEY, uinput.KEY_BACK, 0, 40*time.Millisecond),
+		syn("adc", 0),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestParseKeysAxis(t *testing.T) {
+	m, warnings := parseKeys([]kv{
+		{Key: "DPAD_UP", Value: "ANBERNIC-keys ABS_HAT0Y -1"},
+		{Key: "DPAD_RIGHT", Value: "ANBERNIC-keys ABS_HAT0X 1"},
+		{Key: "DPAD_DOWN", Value: "two words ABS_HAT0Y +1"},
+		{Key: "DPAD_LEFT", Value: "ANBERNIC-keys ABS_HAT0X"},
+		{Key: "BUTTON_A", Value: "ANBERNIC-keys ABS_HAT0X left"},
+		{Key: "BUTTON_B", Value: "ANBERNIC-keys ABS_NOPE 1"},
+		{Key: "BUTTON_X", Value: "ANBERNIC-keys KEY_Q 1"},
+	})
+	want := map[string]KeyTarget{
+		"DPAD_UP":    {Device: "ANBERNIC-keys", Code: uinput.ABS_HAT0Y, Axis: true, Value: -1},
+		"DPAD_RIGHT": {Device: "ANBERNIC-keys", Code: uinput.ABS_HAT0X, Axis: true, Value: 1},
+		"DPAD_DOWN":  {Device: "two words", Code: uinput.ABS_HAT0Y, Axis: true, Value: 1},
+	}
+	if !reflect.DeepEqual(m, want) {
+		t.Fatalf("got %v", m)
+	}
+	if len(warnings) != 4 {
+		t.Fatalf("warnings %q", warnings)
+	}
+	for _, w := range []string{
+		"[keys] DPAD_LEFT: expected <device name> <axis> <value>",
+		"[keys] BUTTON_A: expected <device name> <axis> <value>",
+		"[keys] BUTTON_B: unknown code ABS_NOPE",
+		"[keys] BUTTON_X: unknown code 1",
+	} {
+		if !strings.Contains(strings.Join(warnings, "\n"), w) {
+			t.Fatalf("missing %q in %q", w, warnings)
+		}
 	}
 }

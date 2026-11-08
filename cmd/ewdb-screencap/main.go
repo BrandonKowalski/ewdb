@@ -116,7 +116,7 @@ func run(args []string, stdout, stderr io.Writer, be backend) int {
 		imgs = got
 		if lit == 0 {
 			drmTried = false
-		} else {
+		} else if len(imgs) == 0 {
 			stderr.Write(drmLog.Bytes())
 		}
 	}

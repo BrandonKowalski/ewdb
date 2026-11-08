@@ -84,14 +84,38 @@ func TestScreensMapNamesAndOrder(t *testing.T) {
 	}
 }
 
-func TestOffScreenIsReportedAndSkipped(t *testing.T) {
+func TestOffScreenIsSkippedSilentlyWhenAnotherCaptured(t *testing.T) {
 	src := &fakeSource{conns: []connector{{"DSI-1", true}, {"DSI-2", false}}}
 	code, out, errs := exec(t, fakeBackend(src), "--screens", "top=DSI-2,bottom=DSI-1")
-	if code != 0 || errs != "screencap: the top screen is off\n" {
+	if code != 0 || errs != "" {
 		t.Fatalf("code %d err %q", code, errs)
 	}
 	if w, h := dims(t, out); w != 2 || h != 1 {
 		t.Fatalf("%dx%d", w, h)
+	}
+}
+
+func TestStackedPNGWithOneScreenOffIsCleanStdout(t *testing.T) {
+	src := &fakeSource{conns: []connector{{"DSI-1", true}, {"DSI-2", false}}}
+	var out, errb bytes.Buffer
+	code := run([]string{"-p", "--screens", "top=DSI-2,bottom=DSI-1"}, &out, &errb, fakeBackend(src))
+	if code != 0 || errb.Len() != 0 {
+		t.Fatalf("code %d err %q", code, errb.String())
+	}
+	img, err := png.Decode(&out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 2 || b.Dy() != 1 {
+		t.Fatalf("%v", b)
+	}
+}
+
+func TestGrabErrorSilentWhenAnotherCaptured(t *testing.T) {
+	src := &fakeSource{conns: []connector{{"DSI-1", true}, {"DSI-2", true}}, failOn: "DSI-2"}
+	code, out, errs := exec(t, fakeBackend(src))
+	if code != 0 || errs != "" || len(out) == 0 {
+		t.Fatalf("code %d err %q", code, errs)
 	}
 }
 

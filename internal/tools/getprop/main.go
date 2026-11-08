@@ -1,4 +1,4 @@
-package main
+package getprop
 
 import (
 	"bufio"
@@ -84,6 +84,7 @@ func execute(args []string, out io.Writer) {
 	}
 }
 
-func main() {
-	execute(os.Args[1:], os.Stdout)
+func Main(args []string, stdout, stderr io.Writer) int {
+	execute(args, stdout)
+	return 0
 }

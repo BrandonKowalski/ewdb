@@ -1,4 +1,4 @@
-package main
+package logcat
 
 import (
 	"context"
@@ -238,14 +238,14 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func main() {
+func Main(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	sig := make(chan os.Signal, 4)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGPIPE, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sig
 		cancel()
 	}()
-	code := execute(ctx, os.Args[1:], os.Stdout, os.Stderr)
-	os.Exit(code)
+	return execute(ctx, args, stdout, stderr)
 }

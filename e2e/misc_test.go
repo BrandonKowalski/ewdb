@@ -89,3 +89,11 @@ func TestReconnectRecovers(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 }
+
+func TestSubcommandMapping(t *testing.T) {
+	serial := startDaemon(t, "[device]\nmodel = Multi Model\n[commands]\ngetprop = "+ewdbdBin+" getprop\n")
+	out, se, code := adb(t, serial, "shell", "getprop", "ro.product.model")
+	if code != 0 || out != "Multi Model\n" {
+		t.Fatalf("getprop: %d stdout %q stderr %q", code, out, se)
+	}
+}

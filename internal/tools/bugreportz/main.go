@@ -1,4 +1,4 @@
-package main
+package bugreportz
 
 import (
 	"archive/zip"
@@ -124,6 +124,6 @@ func execute(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func main() {
-	os.Exit(execute(os.Args[1:], os.Stdout, os.Stderr))
+func Main(args []string, stdout, stderr io.Writer) int {
+	return execute(args, stdout, stderr)
 }

@@ -1,4 +1,4 @@
-package main
+package screencap
 
 import (
 	"bytes"
@@ -206,8 +206,8 @@ func captureDRM(src source, named []screen, want string, stderr io.Writer) (int,
 	return 0, imgs, anyLit
 }
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, newBackend()))
+func Main(args []string, stdout, stderr io.Writer) int {
+	return run(args, stdout, stderr, newBackend())
 }
 
 var errNoDRM = errors.New("no DRM card")

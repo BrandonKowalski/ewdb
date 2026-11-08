@@ -119,9 +119,9 @@ much between handheld distributions for one built-in answer. Example for dsOS:
 ```
 [commands]
 logcat = logread -f
-screencap = ewdb-screencap
-getprop = ewdb-getprop
-input = ewdb-input
+screencap = ewdbd screencap
+getprop = ewdbd getprop
+input = ewdbd input
 bugreportz = /usr/libexec/dsos/bugreport
 reboot.bootloader = /usr/libexec/dsos/reboot-recovery
 ```
@@ -148,19 +148,40 @@ A systemd distribution might map `logcat` to `journalctl -f`, and a Wayland one
 ### Default tools
 
 ewdb ships default implementations for the commands that have no common Linux
-equivalent. They are ordinary programs named `ewdb-<command>`, usable from SSH
-too, and they do not depend on the daemon. A distribution maps to them or to
-something else.
+equivalent. They are built into the `ewdbd` binary, BusyBox style, and run as
+ordinary programs, usable from SSH too, without the daemon running. A
+distribution maps to them or to something else.
+
+The binary picks its role from how it is called:
+
+- If the base name of `argv[0]` is `ewdb-<tool>` or `<tool>` for a known tool
+  (`getprop`, `logcat`, `bugreportz`, `input`, `screencap`), it runs that tool
+  with the remaining arguments. A distribution installs `ewdb-<tool>` links to
+  `ewdbd` so scripts can call the tools by name. An `ewdb-<name>` that is not a
+  known tool is an error.
+- Otherwise, if the first argument is a known tool name, it runs that tool with
+  the arguments after it: `ewdbd screencap -p`. Tool names come first; daemon
+  flags do not apply to tools.
+- `ewdbd help`, `-h` and `--help` print the usage, naming the program as it was
+  invoked, and exit 0.
+- Otherwise the arguments are daemon flags (`-c CONFIG`, `-launchers DIR`, and
+  `-listen ADDR` in test builds). The daemon starts only when nothing is left
+  after the flags; any other argument, such as an unknown tool name or a tool
+  name after flags, prints the usage to stderr and exits 2.
+
+Each tool behaves and prints exactly as it would on its own; its messages keep
+their names (`screencap:`, `ewdb-input:`, `ewdb-logcat:`) whichever way it was
+called.
 
 - `screencap`: already exists in `dsos-tools` in C. Port it to Go here as
-  `ewdb-screencap` (it reads DRM connectors named in the config file, with the
+  `ewdbd screencap` (it reads DRM connectors named in the config file, with the
   old-kernel fallbacks above), and remove the C version from dsOS.
 - `logcat`: the system log. Needs a log collector on the device that keeps kernel
   messages, boot script output and frontend output (today `launch_frontend.sh`
   output goes to `/dev/null`). Supports `-d` (dump and exit), following by default,
   `-c` (clear), and simple tag or priority filtering where the source carries it.
   Android's `-v` formats and `-b` buffers are not required. Where the configured
-  file does not exist (no syslog daemon), `ewdb-logcat` reads the kernel log from
+  file does not exist (no syslog daemon), `ewdbd logcat` reads the kernel log from
   `/dev/kmsg` instead, says so on stderr, and leaves it alone on `-c`.
 - `bugreport`: `bugreportz` with Android's progress and `OK:<path>` protocol, so
   plain `adb bugreport` produces a zip. Contents: OS version, kernel version and
@@ -184,8 +205,8 @@ something else.
   press writes that value and `SYN_REPORT`, waits as for a key, then writes 0 and
   `SYN_REPORT`; an axis the device does not have is an error too. Concurrent
   invocations are serialized with an advisory `flock` on the event node. Only
-  `text` needs a persistent device:
-  `ewdb-input --serve` owns a uinput keyboard (`ewdb keyboard`, limited to the
+  `text` needs a persistent device: `ewdbd input --serve` (or
+  `ewdb-input --serve`) owns a uinput keyboard (`ewdb keyboard`, limited to the
   keys `text` types plus shift) and runs `text` requests over a unix socket;
   without it `text` fails and the other commands are unaffected. If another
   process holds an `EVIOCGRAB` on a device, the kernel does not deliver
@@ -273,8 +294,10 @@ Calls made by the designer, not the owner. The owner may overrule any of them.
 - **Home: its own repository**, sibling to dsOS, since it targets more than dsOS.
   dsOS gets a Buildroot package that builds it from a pinned revision. Until it
   has a public home, a local path works the way `dsos-tools` does.
-- **Default tools as one multi-call binary or separate binaries**, named
-  `ewdb-<command>`, builder's choice.
+- **Default tools in one multi-call binary** with the daemon (owner approved,
+  2026-11-07). Six static Go binaries each carried their own runtime, about
+  13.8 MB stripped on arm64; one binary is about 3.3 MB. Distributions install
+  `ewdb-<command>` links to `ewdbd`.
 - **Config file:** `/etc/ewdbd.conf`, INI-style as in the example, one per device.
   Besides `[commands]` it holds product strings, DRM connector names, touch and
   gamepad device names, the state directory and the USB gadget path. dsOS ships it

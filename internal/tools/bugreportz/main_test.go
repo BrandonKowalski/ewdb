@@ -1,4 +1,4 @@
-package main
+package bugreportz
 
 import (
 	"archive/zip"

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log"
 	"time"
 
@@ -18,7 +19,7 @@ const (
 	autoSpec  = "auto"
 )
 
-func registerFlags() {}
+func registerFlags(*flag.FlagSet) {}
 
 func checkFlags() error { return nil }
 

@@ -14,8 +14,8 @@ import (
 
 var listenAddr *string
 
-func registerFlags() {
-	listenAddr = flag.String("listen", "127.0.0.1:5555", "loopback address to listen on")
+func registerFlags(fs *flag.FlagSet) {
+	listenAddr = fs.String("listen", "127.0.0.1:5555", "loopback address to listen on")
 }
 
 func checkFlags() error {

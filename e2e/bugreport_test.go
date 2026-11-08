@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,10 +12,8 @@ import (
 func TestAdbBugreport(t *testing.T) {
 	requireAdb(t)
 	bin := filepath.Join(t.TempDir(), "ewdb-bugreportz")
-	build := exec.Command("go", "build", "-o", bin, "ewdb/cmd/ewdb-bugreportz")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
+	if err := os.Symlink(ewdbdBin, bin); err != nil {
+		t.Fatal(err)
 	}
 	remote := t.TempDir()
 	local := t.TempDir()

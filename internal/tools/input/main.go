@@ -1,4 +1,4 @@
-package main
+package input
 
 import (
 	"context"
@@ -92,8 +92,9 @@ func execute(args []string, stderr io.Writer) int {
 	return local(c, systemDevices{}, args, stderr)
 }
 
-func main() {
+func Main(args []string, stdout, stderr io.Writer) int {
+	log.SetOutput(stderr)
 	log.SetFlags(0)
 	log.SetPrefix("ewdb-input: ")
-	os.Exit(execute(os.Args[1:], os.Stderr))
+	return execute(args, stderr)
 }

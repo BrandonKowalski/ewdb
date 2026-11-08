@@ -100,11 +100,41 @@ func (in *injector) run(args []string) error {
 			return err
 		}
 	}
-	events, err := Plan(args, in.keys, touch)
+	keys := in.keys
+	if cmd == "keyevent" {
+		var err error
+		if keys, err = rangedKeys(in.keys, args[1:], open); err != nil {
+			return err
+		}
+	}
+	events, err := Plan(args, keys, touch)
 	if err != nil {
 		return err
 	}
 	return in.execute(events, touch.Device, cmd == "keyevent", open)
+}
+
+func rangedKeys(keys map[string]KeyTarget, names []string, open func(string) (Target, error)) (map[string]KeyTarget, error) {
+	out := make(map[string]KeyTarget, len(keys))
+	for n, k := range keys {
+		out[n] = k
+	}
+	for _, a := range names {
+		name := canonicalKey(a)
+		k, ok := out[name]
+		if !ok || !k.Axis || k.Ranged {
+			continue
+		}
+		t, err := open(k.Device)
+		if err != nil {
+			return nil, err
+		}
+		if info, ok := t.Abs(k.Code); ok {
+			k.Ranged, k.Min, k.Max = true, info.Min, info.Max
+			out[name] = k
+		}
+	}
+	return out, nil
 }
 
 func (in *injector) execute(events []Event, touchDev string, strict bool, open func(string) (Target, error)) error {

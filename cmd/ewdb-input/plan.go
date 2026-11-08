@@ -27,6 +27,16 @@ type KeyTarget struct {
 	Code   uint16
 	Axis   bool
 	Value  int32
+	Ranged bool
+	Min    int32
+	Max    int32
+}
+
+func (k KeyTarget) rest() int32 {
+	if !k.Ranged {
+		return 0
+	}
+	return int32((int64(k.Min) + int64(k.Max)) / 2)
 }
 
 type Touch struct {
@@ -315,13 +325,16 @@ func planKeyevent(args []string, keys map[string]KeyTarget) ([]Event, error) {
 		if i > 0 {
 			gap = keyGap
 		}
-		typ, press := uint16(uinput.EV_KEY), int32(1)
+		typ, press, rest := uint16(uinput.EV_KEY), int32(1), int32(0)
 		if target.Axis {
-			typ, press = uinput.EV_ABS, target.Value
+			if target.Ranged && (target.Value < target.Min || target.Value > target.Max) {
+				return nil, fmt.Errorf("key %s: value %d out of range %d..%d on %s", name, target.Value, target.Min, target.Max, target.Device)
+			}
+			typ, press, rest = uinput.EV_ABS, target.Value, target.rest()
 		}
 		b.add(target.Device, typ, target.Code, press, gap)
 		b.syn(target.Device)
-		b.add(target.Device, typ, target.Code, 0, keyGap)
+		b.add(target.Device, typ, target.Code, rest, keyGap)
 		b.syn(target.Device)
 	}
 	return b.events, nil

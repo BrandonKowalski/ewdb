@@ -271,3 +271,29 @@ func TestPlanMinRange(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestInjectStickAxisReleasesToCentre(t *testing.T) {
+	pad := newDev("pad", map[uint16]uinput.AbsInfo{uinput.ABS_X: {Min: 0, Max: 255}})
+	in := newInjector(table{"pad": pad})
+	in.keys["DPAD_LEFT"] = KeyTarget{Device: "pad", Code: uinput.ABS_X, Axis: true, Value: 255}
+	if err := in.run([]string{"keyevent", "DPAD_LEFT"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []write{
+		{uinput.EV_ABS, uinput.ABS_X, 255}, {uinput.EV_SYN, 0, 0},
+		{uinput.EV_ABS, uinput.ABS_X, 127}, {uinput.EV_SYN, 0, 0},
+	}
+	if !reflect.DeepEqual(pad.writes, want) {
+		t.Fatalf("got %v", pad.writes)
+	}
+}
+
+func TestInjectAxisValueOutsideDeviceRangeWritesNothing(t *testing.T) {
+	pad := newDev("pad", map[uint16]uinput.AbsInfo{uinput.ABS_HAT0X: {Min: -1, Max: 1}})
+	in := newInjector(table{"pad": pad})
+	in.keys["DPAD_LEFT"] = KeyTarget{Device: "pad", Code: uinput.ABS_HAT0X, Axis: true, Value: 7}
+	err := in.run([]string{"keyevent", "DPAD_LEFT"})
+	if err == nil || !strings.Contains(err.Error(), "out of range -1..1") || len(pad.writes) != 0 {
+		t.Fatalf("%v %v", err, pad.writes)
+	}
+}

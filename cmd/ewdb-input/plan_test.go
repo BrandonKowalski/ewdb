@@ -341,3 +341,33 @@ func TestParseKeysAxis(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanAxisReleaseHatIsZero(t *testing.T) {
+	k := map[string]KeyTarget{"DPAD_LEFT": {Device: "pad", Code: uinput.ABS_HAT0X, Axis: true, Value: -1, Ranged: true, Min: -1, Max: 1}}
+	got, err := Plan([]string{"keyevent", "DPAD_LEFT"}, k, touch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[2].Value != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestPlanAxisReleaseStickIsCentre(t *testing.T) {
+	k := map[string]KeyTarget{"DPAD_LEFT": {Device: "pad", Code: uinput.ABS_X, Axis: true, Value: 0, Ranged: true, Min: 0, Max: 255}}
+	got, err := Plan([]string{"keyevent", "DPAD_LEFT"}, k, touch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Value != 0 || got[2].Value != 127 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestPlanAxisValueOutOfRangeRejected(t *testing.T) {
+	k := map[string]KeyTarget{"DPAD_LEFT": {Device: "pad", Code: uinput.ABS_HAT0X, Axis: true, Value: 5, Ranged: true, Min: -1, Max: 1}}
+	got, err := Plan([]string{"keyevent", "DPAD_LEFT"}, k, touch)
+	if err == nil || got != nil || err.Error() != "key DPAD_LEFT: value 5 out of range -1..1 on pad" {
+		t.Fatalf("%v %v", got, err)
+	}
+}

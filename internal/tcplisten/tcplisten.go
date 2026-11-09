@@ -33,7 +33,10 @@ func (t *Transport) Read() (wire.Message, error) {
 func (t *Transport) Write(m wire.Message) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return wire.Write(t.conn, m, t.checksum)
+	h := wire.Header(m, t.checksum)
+	bufs := net.Buffers{h[:], m.Data}
+	_, err := bufs.WriteTo(t.conn)
+	return err
 }
 
 func (t *Transport) SetChecksum(on bool) {

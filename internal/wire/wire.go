@@ -24,8 +24,31 @@ const (
 	VersionMin = 0x01000000
 	MaxPayload = 1048576
 
-	headerSize = 24
+	HeaderSize = 24
+
+	pooledMin = 4096
 )
+
+var payloads = make(chan []byte, 2)
+
+func payload() []byte {
+	select {
+	case b := <-payloads:
+		return b
+	default:
+		return make([]byte, MaxPayload)
+	}
+}
+
+func Release(b []byte) {
+	if cap(b) != MaxPayload {
+		return
+	}
+	select {
+	case payloads <- b[:MaxPayload]:
+	default:
+	}
+}
 
 var Features = []string{"shell_v2", "stat_v2", "ls_v2", "fixed_push_mkdir"}
 
@@ -35,7 +58,7 @@ type Message struct {
 }
 
 func Read(r io.Reader, max uint32) (Message, error) {
-	var h [headerSize]byte
+	var h [HeaderSize]byte
 	if _, err := io.ReadFull(r, h[:]); err != nil {
 		return Message{}, err
 	}
@@ -52,30 +75,42 @@ func Read(r io.Reader, max uint32) (Message, error) {
 	if length > max {
 		return Message{}, fmt.Errorf("wire: payload %d exceeds %d", length, max)
 	}
-	if length > 0 {
+	if length >= pooledMin && length <= MaxPayload {
+		m.Data = payload()[:length]
+	} else if length > 0 {
 		m.Data = make([]byte, length)
+	}
+	if length > 0 {
 		if _, err := io.ReadFull(r, m.Data); err != nil {
+			Release(m.Data)
 			return Message{}, err
 		}
 	}
 	return m, nil
 }
 
-func Write(w io.Writer, m Message, checksum bool) error {
-	buf := make([]byte, headerSize+len(m.Data))
-	binary.LittleEndian.PutUint32(buf[0:], m.Command)
-	binary.LittleEndian.PutUint32(buf[4:], m.Arg0)
-	binary.LittleEndian.PutUint32(buf[8:], m.Arg1)
-	binary.LittleEndian.PutUint32(buf[12:], uint32(len(m.Data)))
+func Header(m Message, checksum bool) [HeaderSize]byte {
+	var h [HeaderSize]byte
+	binary.LittleEndian.PutUint32(h[0:], m.Command)
+	binary.LittleEndian.PutUint32(h[4:], m.Arg0)
+	binary.LittleEndian.PutUint32(h[8:], m.Arg1)
+	binary.LittleEndian.PutUint32(h[12:], uint32(len(m.Data)))
 	if checksum {
 		var sum uint32
 		for _, b := range m.Data {
 			sum += uint32(b)
 		}
-		binary.LittleEndian.PutUint32(buf[16:], sum)
+		binary.LittleEndian.PutUint32(h[16:], sum)
 	}
-	binary.LittleEndian.PutUint32(buf[20:], m.Command^0xffffffff)
-	copy(buf[headerSize:], m.Data)
+	binary.LittleEndian.PutUint32(h[20:], m.Command^0xffffffff)
+	return h
+}
+
+func Write(w io.Writer, m Message, checksum bool) error {
+	h := Header(m, checksum)
+	buf := make([]byte, HeaderSize+len(m.Data))
+	copy(buf, h[:])
+	copy(buf[HeaderSize:], m.Data)
 	_, err := w.Write(buf)
 	return err
 }

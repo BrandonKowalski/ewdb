@@ -1,7 +1,6 @@
 package usb
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -212,15 +211,11 @@ func (t *transport) Read() (wire.Message, error) {
 func (t *transport) Write(m wire.Message) error {
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
-	var b bytes.Buffer
-	if err := wire.Write(&b, m, t.checksum); err != nil {
+	h := wire.Header(m, t.checksum)
+	if err := t.writeAll(h[:]); err != nil {
 		return err
 	}
-	raw := b.Bytes()
-	if err := t.writeAll(raw[:headerLen]); err != nil {
-		return err
-	}
-	for p := raw[headerLen:]; len(p) > 0; {
+	for p := m.Data; len(p) > 0; {
 		n := min(len(p), t.writeChunk)
 		if err := t.writeAll(p[:n]); err != nil {
 			return err

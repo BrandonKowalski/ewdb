@@ -154,6 +154,8 @@ func (s *Session) handle(m wire.Message) {
 	case wire.WRTE:
 		if st := s.stream(m.Arg1); st != nil && st.peer() == m.Arg0 {
 			st.onData(m.Data)
+		} else {
+			wire.Release(m.Data)
 		}
 	case wire.CLSE:
 		if st := s.stream(m.Arg1); st != nil {

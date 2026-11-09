@@ -117,6 +117,7 @@ type syncConn struct {
 	ctx context.Context
 	br  *bufio.Reader
 	bw  *bufio.Writer
+	buf []byte
 	eof bool
 }
 
@@ -134,6 +135,7 @@ func serveSync(ctx context.Context, rw io.ReadWriteCloser) {
 		ctx: ctx,
 		br:  bufio.NewReaderSize(rw, 2*syncDataMax),
 		bw:  bufio.NewWriterSize(rw, 2*syncDataMax),
+		buf: make([]byte, 8+syncDataMax),
 	}
 	defer c.bw.Flush()
 	for c.ctx.Err() == nil {
@@ -306,7 +308,7 @@ func (c *syncConn) list(path string, v2 bool) bool {
 }
 
 func (c *syncConn) drain() {
-	buf := make([]byte, syncDataMax)
+	buf := c.buf
 	for {
 		id, n, ok := c.readU32Pair()
 		if !ok || id != idData || n > syncDataMax {
@@ -408,7 +410,11 @@ func (c *syncConn) sendFile(path string, mode os.FileMode, doUnlink bool) (uint3
 			f.Close()
 			return 0, c.abortSend(path, doUnlink)
 		}
-		if _, err := io.CopyN(f, c.br, int64(n)); err != nil {
+		_, err := io.ReadFull(c.br, c.buf[:n])
+		if err == nil {
+			_, err = f.Write(c.buf[:n])
+		}
+		if err != nil {
 			if c.ctx.Err() == nil && !isReadSide(err) {
 				c.failErr("write failed", err)
 				f.Close()
@@ -489,7 +495,7 @@ func (c *syncConn) recv(path string) bool {
 		return false
 	}
 	defer f.Close()
-	buf := make([]byte, 8+syncDataMax)
+	buf := c.buf
 	binary.LittleEndian.PutUint32(buf[0:4], idData)
 	for {
 		if c.ctx.Err() != nil {

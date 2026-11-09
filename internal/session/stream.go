@@ -22,6 +22,7 @@ type Stream struct {
 	cond        *sync.Cond
 	remote      uint32
 	queue       [][]byte
+	head        int
 	eof         bool
 	writeClosed bool
 
@@ -76,13 +77,14 @@ func (st *Stream) Read(p []byte) (int, error) {
 		st.mu.Unlock()
 		return 0, nil
 	}
-	n := copy(p, st.queue[0])
-	ack := n == len(st.queue[0])
+	n := copy(p, st.queue[0][st.head:])
+	st.head += n
+	ack := st.head == len(st.queue[0])
 	if ack {
+		wire.Release(st.queue[0])
 		st.queue[0] = nil
 		st.queue = st.queue[1:]
-	} else {
-		st.queue[0] = st.queue[0][n:]
+		st.head = 0
 	}
 	remote := st.remote
 	st.mu.Unlock()
@@ -184,6 +186,7 @@ func (st *Stream) onData(data []byte) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if st.eof {
+		wire.Release(data)
 		return
 	}
 	st.queue = append(st.queue, data)

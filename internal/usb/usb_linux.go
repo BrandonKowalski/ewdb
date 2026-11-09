@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -72,14 +74,20 @@ func ioSigmask() unix.Sigset_t {
 		s.Val[i]--
 	}
 	bits := uint(unsafe.Sizeof(s.Val[0]) * 8)
-	for _, sig := range []unix.Signal{unix.SIGURG, unix.SIGSEGV, unix.SIGBUS, unix.SIGFPE, unix.SIGILL, unix.SIGTRAP} {
+	for _, sig := range []unix.Signal{interruptSignal, unix.SIGSEGV, unix.SIGBUS, unix.SIGFPE, unix.SIGILL, unix.SIGTRAP} {
 		n := uint(sig) - 1
 		s.Val[n/bits] &^= 1 << (n % bits)
 	}
 	return s
 }
 
+const interruptSignal = unix.SIGUSR2
+
 var blockedSignals = ioSigmask()
+
+func init() {
+	signal.Notify(make(chan os.Signal, 1), interruptSignal)
+}
 
 type transport struct {
 	rfd, wfd   int
@@ -313,7 +321,7 @@ func (t *transport) reap() {
 			break
 		}
 		for _, tid := range tids {
-			unix.Tgkill(pid, tid, unix.SIGURG)
+			unix.Tgkill(pid, tid, interruptSignal)
 		}
 		time.Sleep(reapInterval)
 	}

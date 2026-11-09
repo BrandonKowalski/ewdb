@@ -48,9 +48,6 @@ Wi-Fi adb is left out on purpose: ewdbd has no network listener and serves USB o
 - Anbernic RG DS Plus on dsOS: RK3568, Linux 7.2, DRM, two screens.
 - Anbernic RG35XX SP and RG SP on Base OS 1.4.0: Allwinner H700, Linux 4.9, fbdev.
 
-Known issue: on macOS hosts, very large pulls and big `exec-out` transfers occasionally fail because the host ends a USB
-read early. adb reconnects within a few seconds. Pushes are unaffected.
-
 ## Installing on a handheld
 
 There is no install script yet. If your distribution already ships an `adbd` that its own USB script starts (Base OS

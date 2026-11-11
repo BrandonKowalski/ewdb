@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -50,6 +51,36 @@ func selectTool(argv []string) (string, []string, bool) {
 	return "", nil, false
 }
 
+func versionString(bi *debug.BuildInfo, ok bool) string {
+	if !ok {
+		return "unknown"
+	}
+	var rev, when string
+	dirty := false
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.time":
+			when = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return strings.TrimSpace(bi.Main.Version + " " + bi.GoVersion)
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if dirty {
+		rev += "-dirty"
+	}
+	return strings.Join(strings.Fields(rev+" "+when+" "+bi.GoVersion), " ")
+}
+
+var readBuildInfo = debug.ReadBuildInfo
+
 func usage(w io.Writer, prog string, fs *flag.FlagSet) {
 	names := make([]string, 0, len(tools))
 	for n := range tools {
@@ -71,6 +102,7 @@ func dispatch(argv []string, stdout, stderr io.Writer) (int, *daemonOpts) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	opts := &daemonOpts{}
+	showVersion := fs.Bool("version", false, "print version and exit")
 	fs.StringVar(&opts.conf, "c", "/etc/ewdbd.conf", "config path")
 	fs.StringVar(&opts.launchers, "launchers", "/run/ewdbd/bin", "directory for command launchers")
 	registerFlags(fs)
@@ -96,6 +128,10 @@ func dispatch(argv []string, stdout, stderr io.Writer) (int, *daemonOpts) {
 		fmt.Fprintln(stderr, err)
 		usage(stderr, prog, fs)
 		return 2, nil
+	}
+	if *showVersion {
+		fmt.Fprintf(stdout, "%s %s\n", prog, versionString(readBuildInfo()))
+		return 0, nil
 	}
 	if fs.NArg() > 0 {
 		if fs.NArg() == len(argv)-1 {

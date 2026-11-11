@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -126,5 +127,40 @@ func TestDispatchRunsTool(t *testing.T) {
 	code, _, so, _ := dispatchOut("ewdbd", "bugreportz", "-v")
 	if code != 0 || so != "" {
 		t.Fatalf("bugreportz -v: code %d stdout %q", code, so)
+	}
+}
+
+func TestVersionString(t *testing.T) {
+	bi := &debug.BuildInfo{GoVersion: "go1.26.4", Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "39dd8ee573d74c1a02c83ebc6b11bb5b4a9f552d"},
+		{Key: "vcs.time", Value: "2026-11-09T04:59:46Z"},
+		{Key: "vcs.modified", Value: "true"},
+	}}
+	if got := versionString(bi, true); got != "39dd8ee573d7-dirty 2026-11-09T04:59:46Z go1.26.4" {
+		t.Fatalf("got %q", got)
+	}
+	bi.Settings = bi.Settings[:2]
+	if got := versionString(bi, true); got != "39dd8ee573d7 2026-11-09T04:59:46Z go1.26.4" {
+		t.Fatalf("got %q", got)
+	}
+	if got := versionString(&debug.BuildInfo{GoVersion: "go1.26.4", Main: debug.Module{Version: "(devel)"}}, true); got != "(devel) go1.26.4" {
+		t.Fatalf("got %q", got)
+	}
+	if got := versionString(nil, false); got != "unknown" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestVersionFlagDoesNotStartDaemon(t *testing.T) {
+	old := readBuildInfo
+	defer func() { readBuildInfo = old }()
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{GoVersion: "go1.26.4", Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abc"}}}, true
+	}
+	for _, f := range []string{"-version", "--version"} {
+		code, opts, so, _ := dispatchOut("/usr/bin/ewdbd", f)
+		if opts != nil || code != 0 || so != "ewdbd abc go1.26.4\n" {
+			t.Fatalf("%s: code %d opts %v stdout %q", f, code, opts, so)
+		}
 	}
 }

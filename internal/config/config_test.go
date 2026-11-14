@@ -145,3 +145,27 @@ func TestMissingFileGivesDefaults(t *testing.T) {
 		t.Fatalf("c = %+v", c)
 	}
 }
+
+func TestMaxData(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want uint32
+		warn bool
+	}{
+		{"", 32768, false},
+		{"maxdata = 1048576\n", 1048576, false},
+		{"maxdata = 4096\n", 4096, false},
+		{"maxdata = 4095\n", 32768, true},
+		{"maxdata = 1048577\n", 32768, true},
+		{"maxdata = big\n", 32768, true},
+	} {
+		c, err := Parse(strings.NewReader("[device]\n" + tc.in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		warned := len(c.Warnings) == 1 && strings.Contains(c.Warnings[0], "maxdata")
+		if c.MaxData != tc.want || warned != tc.warn {
+			t.Errorf("%q: maxdata %d warnings %v", tc.in, c.MaxData, c.Warnings)
+		}
+	}
+}

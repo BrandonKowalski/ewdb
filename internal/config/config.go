@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ type Config struct {
 	Name, Model, Device string
 	State, USB          string
 	SerialFile, Shell   string
+	MaxData             uint32
 	Props               []KV
 	Commands            map[string]string
 	Sections            map[string][]KV
@@ -30,7 +32,12 @@ type Config struct {
 	Warnings            []string
 }
 
-const commandTimeout = 2 * time.Second
+const (
+	commandTimeout = 2 * time.Second
+	minMaxData     = 4096
+	maxMaxData     = 1048576
+	defaultMaxData = 32768
+)
 
 func defaults() *Config {
 	return &Config{
@@ -40,6 +47,7 @@ func defaults() *Config {
 		State:    "/var/lib/ewdb",
 		USB:      "auto",
 		Shell:    "/bin/sh",
+		MaxData:  defaultMaxData,
 		Commands: map[string]string{},
 		Sections: map[string][]KV{},
 	}
@@ -118,6 +126,14 @@ func parse(r io.Reader, run bool) (*Config, error) {
 	}
 	if v := device["shell"]; v != "" {
 		c.Shell = v
+	}
+	if v := device["maxdata"]; v != "" {
+		n, err := strconv.ParseUint(v, 10, 32)
+		if err != nil || n < minMaxData || n > maxMaxData {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("maxdata %q is not between %d and %d; using %d", v, minMaxData, maxMaxData, c.MaxData))
+		} else {
+			c.MaxData = uint32(n)
+		}
 	}
 	return c, nil
 }

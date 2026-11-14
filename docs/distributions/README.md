@@ -96,6 +96,7 @@ Input device names under `[keys]` are what the kernel calls them. Check `/proc/b
 | `usb`                                             | `auto`           | `ffs:DIR`, `android:PATH` or `auto`. `auto` tries `/dev/usb-ffs/adb`, then `/dev/android_adb`.               |
 | `serial_file`                                     |                  | First line is `ro.serialno`.                                                                                 |
 | `shell`                                           | `/bin/sh`        | Shell for `adb shell`, `exec:` and mapped actions.                                                           |
+| `maxdata`                                         | `32768`          | Largest adb payload the host may send, 4096 to 1048576. Each is one USB request.                             |
 
 The `*_command` keys are for images that run on more than one device.
 

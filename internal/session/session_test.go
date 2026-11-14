@@ -64,7 +64,7 @@ type harness struct {
 }
 
 func testConfig() *config.Config {
-	return &config.Config{Name: "dsos", Model: "RG DS Plus", Device: "rgds-plus"}
+	return &config.Config{Name: "dsos", Model: "RG DS Plus", Device: "rgds-plus", MaxData: 65536}
 }
 
 func start(t *testing.T, reg *Registry) *harness {
@@ -181,7 +181,7 @@ func TestHandshake(t *testing.T) {
 func TestHandshakeCapsMaxdataAndChecksumsOldHosts(t *testing.T) {
 	h := start(t, &Registry{})
 	h.send(wire.Message{Command: wire.CNXN, Arg0: wire.VersionMin, Arg1: 4 * wire.MaxPayload})
-	h.expectMsg(wire.CNXN, wire.Version, wire.MaxPayload, string(wire.Banner(testConfig(), wire.Features)))
+	h.expectMsg(wire.CNXN, wire.Version, 65536, string(wire.Banner(testConfig(), wire.Features)))
 	h.p.mu.Lock()
 	defer h.p.mu.Unlock()
 	if len(h.p.checksum) != 1 || !h.p.checksum[0] {

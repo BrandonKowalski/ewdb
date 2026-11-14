@@ -106,7 +106,7 @@ func Serve(ctx context.Context, t Transport, c *config.Config, r *Registry) erro
 			if s != nil {
 				s.reset()
 			}
-			s = newSession(ctx, cn, r, m.Arg1)
+			s = newSession(ctx, cn, r, c.MaxData, m.Arg1)
 			if cs, ok := t.(ChecksumSetter); ok {
 				cs.SetChecksum(m.Arg0 < wire.Version)
 			}
@@ -132,8 +132,7 @@ func Serve(ctx context.Context, t Transport, c *config.Config, r *Registry) erro
 	return err
 }
 
-func newSession(ctx context.Context, cn *conn, r *Registry, hostMax uint32) *Session {
-	maxdata := uint32(wire.MaxPayload)
+func newSession(ctx context.Context, cn *conn, r *Registry, maxdata, hostMax uint32) *Session {
 	if hostMax > 0 && hostMax < maxdata {
 		maxdata = hostMax
 	}
